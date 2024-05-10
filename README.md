@@ -4,6 +4,12 @@
 
 Mangrove is a POC of an adaptive entity tree cache for GraphQL and Javascript. It allows you to invalidate individual type+id combinations (called Entities), and intelligently remodels your clients queries to only request data that has become stale, in the most efficient way possible.
 
+## Installation
+
+```bash
+$ npm install mangrove-graphql
+```
+
 ## Why Mangrove?
 Let's say we have a simple schema that can return a list of "Items". Each item has an animal name associated to it via the `data` field. This field is quite costly to resolve - each resolution takes 500ms - so naturally, we want to avoid triggering this resolution as much as possible.
 
