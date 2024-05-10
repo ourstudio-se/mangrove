@@ -1,6 +1,6 @@
 {
-  "name": "mangrove",
-  "version": "0.1.0",
+  "name": "mangrove-graphql",
+  "version": "0.1.1",
   "description": "Adaptive tree cache for GraphQL and Javascript",
   "author": "Max Bolotin",
   "license": "MIT",
@@ -12,9 +12,12 @@
       "require": "./lib/cjs/index.js"
     }
   },
-  "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
-  },
+  "files": [
+    "lib",
+    "README.md",
+    "LICENSE.md",
+    "package.json"
+  ],
   "repository": {
     "type": "git",
     "url": "git@github.com:ourstudio-se/mangrove.git"
@@ -25,7 +28,8 @@
     "lint": "eslint 'packages/**/src/**/*.ts'",
     "test": "jest --no-watchman --forceExit",
     "nuke-build-cache": "find . -iname tsconfig.tsbuildinfo -exec rm {} \\;",
-    "fixup": "./scripts/fixup.sh ."
+    "fixup": "./scripts/fixup.sh .",
+    "prepublish": "yarn build"
   },
   "devDependencies": {
     "@envelop/core": "^5.0.1",
