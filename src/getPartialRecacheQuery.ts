@@ -4,7 +4,6 @@ import {
   Kind,
   OperationDefinitionNode,
   SelectionSetNode,
-  print,
   visit,
 } from "graphql";
 import { EntityTreeNode } from "./typings";
@@ -62,9 +61,6 @@ export function getPartialRecacheQuery({
           ...(operation.selectionSet?.selections ?? []),
           ...cacheResolutions,
         ];
-
-        const x = print(operation);
-        x;
 
         if (selections.length === 0) {
           isNoopDocument = true;
