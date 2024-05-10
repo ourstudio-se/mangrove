@@ -1,4 +1,4 @@
-import * as DataLoader from "dataloader";
+import DataLoader from "dataloader";
 import type * as Redis from "ioredis";
 import { Cache, CacheMutations, MaybePromise } from "../typings";
 import { CacheValidationError } from "./errors";
