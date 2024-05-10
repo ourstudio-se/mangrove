@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+      "./src/**/*.ts",
+      "./src/**/*.test.ts",
+      "./regresstion-tests/**/*.ts"
+  ],
+  "exclude": []
+}

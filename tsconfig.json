@@ -1,0 +1,16 @@
+{
+  "include": [],
+  "compilerOptions": {
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "composite": true
+  },
+  "references": [
+    {
+      "path": "./tsconfig-cjs.json"
+    },
+    {
+      "path": "./tsconfig-esm.json"
+    }
+  ]
+}
