@@ -150,7 +150,7 @@ export type CacheResolverMap = Record<string, CacheResolver>;
 
 export interface EntityTreeNodeSelection {
   node: EntityTreeNode;
-  requiredIds?: Set<Id>;
+  requiredEntities?: Record<string, Set<Id>>;
 }
 
 export interface EntityTreeNodeSelections {
@@ -163,8 +163,8 @@ export interface EntityTreeNode {
   isInvalidated: boolean;
   isList: boolean;
   isRequired: boolean;
-  requiredTypename?: string;
-  resolver?: CacheResolver;
+  isEntity?: boolean;
+  resolvers?: CacheResolverMap;
   selections?: EntityTreeNodeSelections;
 }
 

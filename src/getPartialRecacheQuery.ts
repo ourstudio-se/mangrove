@@ -97,21 +97,31 @@ export function getPartialRecacheQuery({
 
         const coordinates = invalidator.getCoordinates();
 
-        if (!node?.resolver) {
+        if (!node?.resolvers) {
           return;
         }
 
-        const ids = invalidator.getRequiredIds();
+        const resolvers = node.resolvers;
 
         linkSelections[coordinates] = field.selectionSet;
 
-        if (ids !== undefined) {
-          const mapResolutions = getCacheResolutionMapper(node.resolver);
+        const requiredEntities = invalidator.getRequiredEntities();
 
-          cacheResolutions = [
-            ...cacheResolutions,
-            ...mapResolutions(Array.from(ids), coordinates, field.selectionSet),
-          ];
+        if (requiredEntities) {
+          for (const [typename, ids] of Object.entries(requiredEntities)) {
+            const resolver = resolvers[typename];
+
+            if (resolver === undefined) {
+              continue;
+            }
+
+            const mapResolutions = getCacheResolutionMapper(resolver);
+
+            cacheResolutions = [
+              ...cacheResolutions,
+              ...mapResolutions(Array.from(ids), coordinates, field.selectionSet),
+            ];
+          }
         }
 
         return convertFieldNodeToLink(field);

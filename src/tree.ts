@@ -63,7 +63,7 @@ export function buildEntityTreeNode(
 
   let nextNode = selection.node;
 
-  if (nextNode.resolver !== undefined) {
+  if (nextNode.resolvers !== undefined) {
     flagDirty = false;
   }
 
@@ -80,9 +80,14 @@ export function buildEntityTreeNode(
   if (rest.length > 0) {
     nextNode = buildEntityTreeNode(nextNode, ecr, resolvers, rest, flagDirty);
   } else {
-    nextNode.requiredTypename = ecr.entity.typename;
+    nextNode.isEntity = true;
 
-    nextNode.resolver = resolvers[ecr.entity.typename];
+    const resolver = resolvers[ecr.entity.typename];
+
+    if (resolver !== undefined) {
+      nextNode.resolvers ??= {};
+      nextNode.resolvers[ecr.entity.typename] = resolver;
+    }
 
     if (ecr.invalidated) {
       nextNode.isInvalidated = true;
@@ -95,11 +100,23 @@ export function buildEntityTreeNode(
   }
 
   if (nextNode.isRequired) {
-    if (nextNode.resolver === undefined) {
+    if (nextNode.resolvers === undefined) {
       parentNode.isRequired = true;
     }
 
-    const requiredIds = selection.requiredIds ?? new Set();
+    let requiredEntities = selection.requiredEntities;
+
+    if (!requiredEntities) {
+      requiredEntities = {};
+      selection.requiredEntities = requiredEntities;
+    }
+
+    let requiredIds = requiredEntities[ecr.entity.typename];
+
+    if (!requiredIds) {
+      requiredIds = new Set();
+      requiredEntities[ecr.entity.typename] = requiredIds;
+    }
 
     /**
      * Ugly AF
@@ -116,8 +133,6 @@ export function buildEntityTreeNode(
     } else if (list && key.id !== undefined && !requiredIds.has(key.id)) {
       requiredIds.add(key.id);
     }
-
-    selection.requiredIds = requiredIds;
   }
 
   selection.node = nextNode;
@@ -205,8 +220,8 @@ class Invalidator {
     return this.selections[coords];
   }
 
-  getRequiredIds(coords = this.getCoordinates()) {
-    return this.getCurrentSelection(coords)?.requiredIds;
+  getRequiredEntities(coords = this.getCoordinates()) {
+    return this.getCurrentSelection(coords)?.requiredEntities;
   }
 
   getSelectionsToKeep(coords = this.getCoordinates()) {
@@ -248,7 +263,7 @@ const getSelectionsToKeep = memoize1(function getSelectionsToKeep(
       return null;
     }
 
-    if (node.requiredTypename === undefined) {
+    if (!node.isEntity) {
       /*
        * Traversed object nodes that are not known entities need to be included in full,
        * because they could have been changed/invalidated without us knowing
@@ -268,7 +283,7 @@ const getSelectionsToKeep = memoize1(function getSelectionsToKeep(
    * Non-required resolver nodes need to maintain their selection set in order to
    * inject it into a link if needed
    */
-  if (node.resolver) {
+  if (node.resolvers !== undefined) {
     return null;
   }
 
