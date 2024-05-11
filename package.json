@@ -13,7 +13,8 @@
     }
   },
   "files": [
-    "lib",
+    "lib/cjs",
+    "lib/esm",
     "README.md",
     "LICENSE.md",
     "package.json"
