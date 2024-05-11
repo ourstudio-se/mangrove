@@ -19,7 +19,7 @@ import type { Executor } from "@graphql-tools/utils";
 
 const ttl =
   process.env.TTL !== undefined ? parseInt(process.env.TTL) : 60 * 60 * 1000;
-const strategy = process.env.STRATEGY ?? "eager";
+const strategy = process.env.STRATEGY ?? "lazy";
 const useCompression = process.env.USE_COMPRESSION === "true";
 const debugMode = process.env.VSCODE_DEBUG_MODE === "true";
 
