@@ -875,16 +875,6 @@ describe("getPartialRecacheQuery", () => {
     ${ALIAS_ENTITYCACHE_ID}: id
     ${ALIAS_ENTITYCACHE_TYPENAME}: __typename
     name
-    items {
-      ... on SomeObject {
-        anotherObject {
-          relatedEntity {
-            ${ALIAS_ENTITYCACHE_TYPENAME}: __typename
-            ${ALIAS_ENTITYCACHE_ID}: id
-          }
-        }
-      }
-    }
   }
   ${PARTIAL_CACHE_ALIASPREFIX}listQuery_items_anotherObject_relatedEntity_0: getRelatedEntity(id: "2") {
     ${ALIAS_ENTITYCACHE_ID}: id

@@ -16,6 +16,14 @@ import {
 import { memoize1 } from "./borrowedTools/memoize";
 
 function flagBranchDirty(node: EntityTreeNode): void {
+  if (node.isDirty) {
+    return;
+  }
+
+  if (node.resolvers !== undefined && !node.isInvalidated) {
+    return;
+  }
+
   node.isDirty = true;
 
   if (!node.selections) {
@@ -62,20 +70,6 @@ export function buildEntityTreeNode(
   };
 
   let nextNode = selection.node;
-
-  if (nextNode.resolvers !== undefined) {
-    flagDirty = false;
-  }
-
-  // Mark this branch path as dirty. When the node hasn't been invalidated yet,
-  // that is covered by flagBranchDirty() below.
-  if (nextNode.isInvalidated) {
-    flagDirty = true;
-  }
-
-  if (flagDirty) {
-    nextNode.isDirty = true;
-  }
 
   if (rest.length > 0) {
     nextNode = buildEntityTreeNode(nextNode, ecr, resolvers, rest, flagDirty);
