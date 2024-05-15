@@ -30,6 +30,7 @@ import {
 } from "../defaults";
 import { getPartialRecacheQuery } from "../getPartialRecacheQuery";
 import { parseSelectionSet } from "../borrowedTools/parseSelectionSet";
+import { link } from "node:fs";
 
 export interface EagerInvalidationStrategyOpts {
   buildEntityKey?: (entity: EntityRecord) => string;
@@ -145,13 +146,11 @@ function getCacheInvalidator({
       if (result) {
         cacheExtension.partialQuery = print(result.query);
         cacheExtension.linkSelections = result.linkSelections
-          ? Object.keys(result.linkSelections).reduce(
+          ? Object.keys(result.linkSelections).reduce<Record<string, string>>(
               (linksels, coordinate) => {
                 const selectionSet = result.linkSelections![coordinate];
-                return {
-                  ...linksels,
-                  [coordinate]: print(selectionSet),
-                };
+                linksels[coordinate] = print(selectionSet);
+                return linksels;
               },
               {},
             )
@@ -234,10 +233,8 @@ export const eagerInvalidationStrategy = ({
             const selectionSet = parseSelectionSet(
               cacheExtension.linkSelections![coordinates],
             );
-            return {
-              ...linkSelections,
-              [coordinates]: selectionSet,
-            };
+            linkSelections[coordinates] = selectionSet;
+            return linkSelections;
           }, {})
         : {};
 

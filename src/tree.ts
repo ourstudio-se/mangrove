@@ -203,14 +203,12 @@ class Invalidator {
   }
 
   getCurrentNode(coords = this.getCoordinates()) {
-    // eslint-disable-next-line no-useless-catch
     return this.getCurrentSelection(coords)?.node;
   }
 
   getCurrentSelection(
     coords = this.getCoordinates(),
   ): EntityTreeNodeSelection | undefined {
-    // eslint-disable-next-line no-useless-catch
     return this.selections[coords];
   }
 

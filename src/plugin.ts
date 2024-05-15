@@ -30,8 +30,7 @@ export function useMangrove<
   getDocumentString = defaultGetDocumentString,
   shouldCacheResult = defaultShouldCacheResult,
   includeExtensionMetadata = typeof process !== "undefined"
-    ? // eslint-disable-next-line dot-notation
-      process.env["NODE_ENV"] === "development" || !!process.env["DEBUG"]
+    ? process.env["NODE_ENV"] === "development" || !!process.env["DEBUG"]
     : false,
 }: UsePartialCacheParameter<PluginContext>): Plugin<PluginContext> {
   enabled = enabled ? memoize1(enabled) : enabled;

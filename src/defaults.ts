@@ -45,7 +45,9 @@ export function defaultCollectEntityWithLocation(
   const lastPathPart = path[path.length - 1];
 
   if (isListPathPart(lastPathPart)) {
-    path = [...path.slice(0, -1), { ...lastPathPart, id }];
+    const nextPath = path.slice(0, 1);
+    nextPath.push({ ...lastPathPart, id });
+    path = nextPath;
   }
 
   return { entity, path };
@@ -55,7 +57,6 @@ export const defaultShouldCacheResult: ShouldCacheResultFunction = (
   params,
 ): boolean => {
   if (params.result.errors) {
-    // eslint-disable-next-line no-console
     console.warn("[Mangrove] Failed to cache due to errors");
     return false;
   }

@@ -106,7 +106,9 @@ export function strToDataPath(str: string): readonly PathPart[] {
   return str.split(".").map(strToDataPathPart);
 }
 
-export function isObject(value: any): value is Record<string | number | symbol, unknown> {
+export function isObject(
+  value: any,
+): value is Record<string | number | symbol, unknown> {
   return isObjectOrArray(value) && !isArray(value);
 }
 

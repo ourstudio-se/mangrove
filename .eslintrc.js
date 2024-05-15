@@ -10,15 +10,11 @@ module.exports = {
     "jest.config.cjs",
     "project.jest.config.cjs",
     "jest.setup.ts",
-    "packages/*/lib/**/*",
-    "packages/*/node_modules/**/*",
-    "packages/graphiql/**/*",
     "node_modules/**/*",
-    "vite.config.ts"
   ],
   parser: "@typescript-eslint/parser",
   parserOptions: {
-    project: "./tsconfig-eslint.json",
+    project: ["./tsconfig-cjs.json", "./tsconfig-jest.json"],
     sourceType: "module",
     tsconfigRootDir: __dirname,
   },

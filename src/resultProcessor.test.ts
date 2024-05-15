@@ -186,23 +186,19 @@ describe("resultProcessor", () => {
       title: "[Changed] Lorem ipsum",
     });
 
-    expect(data?.["dashboard"]?.["latestUpdates"]?.[0]).toEqual(
-      {
-        __typename: "UpdateInfo",
-        date: "2023-12-04T00:00:00Z",
-        id: "1",
-        text: "Lorem ipsum",
-      },
-    );
+    expect(data?.["dashboard"]?.["latestUpdates"]?.[0]).toEqual({
+      __typename: "UpdateInfo",
+      date: "2023-12-04T00:00:00Z",
+      id: "1",
+      text: "Lorem ipsum",
+    });
 
-    expect(data?.["dashboard"]?.["latestUpdates"]?.[1]).toEqual(
-      {
-        __typename: "UpdateInfo",
-        date: "2023-12-03T00:00:00Z",
-        id: "2",
-        text: "Dolor hic set amit",
-      },
-    );
+    expect(data?.["dashboard"]?.["latestUpdates"]?.[1]).toEqual({
+      __typename: "UpdateInfo",
+      date: "2023-12-03T00:00:00Z",
+      id: "2",
+      text: "Dolor hic set amit",
+    });
   });
 
   test("maps non batch cache resolver results into main data tree", async () => {
@@ -275,23 +271,19 @@ describe("resultProcessor", () => {
       title: "Lorem ipsum",
     });
 
-    expect(data?.["dashboard"]?.["latestUpdates"]?.[0]).toEqual(
-      {
-        __typename: "UpdateInfo",
-        date: "2023-12-04T00:00:00Z",
-        id: "1",
-        text: "Lorem ipsum",
-      },
-    );
+    expect(data?.["dashboard"]?.["latestUpdates"]?.[0]).toEqual({
+      __typename: "UpdateInfo",
+      date: "2023-12-04T00:00:00Z",
+      id: "1",
+      text: "Lorem ipsum",
+    });
 
-    expect(data?.["dashboard"]?.["latestUpdates"]?.[1]).toEqual(
-      {
-        __typename: "UpdateInfo",
-        date: "2023-12-03T00:00:00Z",
-        id: "2",
-        text: "[Changed] Dolor hic set amit",
-      },
-    );
+    expect(data?.["dashboard"]?.["latestUpdates"]?.[1]).toEqual({
+      __typename: "UpdateInfo",
+      date: "2023-12-03T00:00:00Z",
+      id: "2",
+      text: "[Changed] Dolor hic set amit",
+    });
   });
 
   test("maps batch cache resolver results into main data tree", async () => {
@@ -382,32 +374,26 @@ describe("resultProcessor", () => {
       title: "Lorem ipsum",
     });
 
-    expect(data?.["dashboard"]?.["latestUpdates"]?.[0]).toEqual(
-      {
-        __typename: "UpdateInfo",
-        date: "2023-12-04T00:00:00Z",
-        id: "1",
-        text: "[Changed] Lorem ipsum",
-      },
-    );
+    expect(data?.["dashboard"]?.["latestUpdates"]?.[0]).toEqual({
+      __typename: "UpdateInfo",
+      date: "2023-12-04T00:00:00Z",
+      id: "1",
+      text: "[Changed] Lorem ipsum",
+    });
 
-    expect(data?.["dashboard"]?.["latestUpdates"]?.[1]).toEqual(
-      {
-        __typename: "UpdateInfo",
-        date: "2023-12-03T00:00:00Z",
-        id: "2",
-        text: "Dolor hic set amit",
-      },
-    );
+    expect(data?.["dashboard"]?.["latestUpdates"]?.[1]).toEqual({
+      __typename: "UpdateInfo",
+      date: "2023-12-03T00:00:00Z",
+      id: "2",
+      text: "Dolor hic set amit",
+    });
 
-    expect(data?.["dashboard"]?.["latestUpdates"]?.[2]).toEqual(
-      {
-        __typename: "UpdateInfo",
-        date: "2023-12-03T00:00:00Z",
-        id: "3",
-        text: "[Changed] Foo bar",
-      },
-    );
+    expect(data?.["dashboard"]?.["latestUpdates"]?.[2]).toEqual({
+      __typename: "UpdateInfo",
+      date: "2023-12-03T00:00:00Z",
+      id: "3",
+      text: "[Changed] Foo bar",
+    });
   });
 
   // test("uses indexwise array merging only for lists with downstream entities", async () => {

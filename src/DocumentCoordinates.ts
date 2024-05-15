@@ -81,7 +81,7 @@ export function visitWithDocumentCoordinates(
     leave(...args) {
       const node = args[0];
       const fn = getEnterLeaveForKind(visitor, node.kind).leave;
-      let result: any;
+      let result: unknown;
       if (fn) {
         result = fn.apply(visitor, args);
       }

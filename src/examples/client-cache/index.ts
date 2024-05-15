@@ -153,7 +153,7 @@ function logLatency(label: string, latency: number, nomem = false) {
     latencyHist = null;
   }
   const latencyDiff = latencyHist !== null ? latency - latencyHist : null;
-  // eslint-disable-next-line no-console
+
   console.log(
     `[${label}] ${latency.toString()}ms [${printLatency(latencyDiff)}]`,
   );
@@ -207,7 +207,6 @@ async function awaitQuestion(question: string) {
     document,
   });
 
-  // eslint-disable-next-line no-console
   console.log(result);
   await awaitQuestion("Trigger invalidation #1 [Enter]");
 
@@ -219,7 +218,7 @@ async function awaitQuestion(question: string) {
     },
   ]);
   const now = Date.now();
-  // eslint-disable-next-line no-console
+
   console.log(`[Invalidation time] ${now - then}ms`);
 
   await awaitQuestion("Trigger request #2 [Enter]");
@@ -228,7 +227,6 @@ async function awaitQuestion(question: string) {
     document,
   });
 
-  // eslint-disable-next-line no-console
   console.log(result);
   await awaitQuestion("Trigger invalidation #2 [Enter]");
 
@@ -240,7 +238,7 @@ async function awaitQuestion(question: string) {
     },
   ]);
   const now2 = Date.now();
-  // eslint-disable-next-line no-console
+
   console.log(`[Invalidation time] ${now2 - then2}ms`);
 
   await awaitQuestion("Trigger request #3 [Enter]");
@@ -250,7 +248,6 @@ async function awaitQuestion(question: string) {
   });
   result;
 
-  // eslint-disable-next-line no-console
   console.log(result);
 
   process.exit(0);

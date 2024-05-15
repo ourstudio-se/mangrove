@@ -24,7 +24,7 @@ export async function getEntityKeysToInvalidate({
   cache,
   entitiesToInvalidate,
 }: ExpandEntitiesToInvalidateParameter) {
-  let keysToInvalidate: readonly string[] = [];
+  const keysToInvalidate: string[] = [];
 
   /* We're using the Promise.all() pattern here to
       let the cache know it can resolve the key searches
@@ -36,17 +36,18 @@ export async function getEntityKeysToInvalidate({
   for (const entity of entitiesToInvalidate) {
     const entityKey = buildEntityKey(entity);
 
-    keysToInvalidate = [...keysToInvalidate, entityKey];
+    keysToInvalidate.push(entityKey);
 
     if (!entity.id) {
       deferredKeys.push(cache.getKeysStartingWith(entity.typename));
     }
   }
 
-  keysToInvalidate = [
-    ...keysToInvalidate,
-    ...(await Promise.all(deferredKeys)).flat(),
-  ];
+  const keys = (await Promise.all(deferredKeys)).flat();
+
+  for (const key of keys) {
+    keysToInvalidate.push(key);
+  }
 
   return new Set(keysToInvalidate.flat());
 }
