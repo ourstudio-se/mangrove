@@ -2,6 +2,7 @@ import {
   BindExecutionArgs,
   BindExecutorRequest,
   CacheResolverMap,
+  EntityRecord,
   KnownEntitiesMap,
   MakeQueryRunnerParameter,
   RunQuery,
@@ -194,13 +195,17 @@ export function makeQueryRunner({
       originalDocument: args.document,
     });
 
-    const contextValue = args.context ?? ({} as any);
+    const contextValue = (args.context ?? {}) as object;
 
     if ("collectResourceIdentifier" in contextValue) {
       // Dirty hack to trigger live query invalidation
 
       for (const { entity } of collectedEntities ?? []) {
-        contextValue.collectResourceIdentifier(entity);
+        (
+          contextValue.collectResourceIdentifier as (
+            entity: EntityRecord,
+          ) => void
+        )(entity);
       }
     }
 

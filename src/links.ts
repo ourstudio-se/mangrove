@@ -47,7 +47,7 @@ export function makeLinkCollector(
   knownEntities: KnownEntitiesMap,
 ) {
   function _collectLinks(
-    data: any,
+    data: unknown,
     coordinates: string = CoordinateRoot.query,
     link?: TypeLinkWithCoordinates,
   ): TypeLinkWithCoordinates | TypeLinkWithCoordinates[] {
@@ -124,19 +124,19 @@ export function makeLinkCollector(
     return [];
   }
 
-  return function collectLinks(data: any) {
+  return function collectLinks(data: unknown) {
     const linkOrLinks = _collectLinks(data);
     return isArray(linkOrLinks) ? linkOrLinks : [linkOrLinks];
   };
 }
 
 function injectDataByCoordinates(
-  data: any,
+  data: unknown,
   path: readonly string[],
-  injector: (data: any) => any,
-): any {
+  injector: (data: unknown) => unknown,
+): unknown {
   if (isArray(data)) {
-    return data.map((next: any) => {
+    return data.map((next: unknown) => {
       return injectDataByCoordinates(next, path, injector);
     });
   }
@@ -188,7 +188,7 @@ function getEntityLinkMerger(entityData: unknown) {
 export function mergeLink(
   data: ObjMap<unknown>,
   coordinates: string,
-  resolverValue: any,
+  resolverValue: unknown,
 ): void {
   const merge = getEntityLinkMerger(resolverValue);
 

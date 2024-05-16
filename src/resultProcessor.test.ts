@@ -177,7 +177,7 @@ describe("resultProcessor", () => {
       originalDocument: parse(`query { a }`),
     });
 
-    const data = processedResult.data as any;
+    const data = processedResult.data;
 
     expect(data?.["dashboard"]?.["topActivity"]).toEqual({
       __typename: "Activity",
@@ -262,7 +262,7 @@ describe("resultProcessor", () => {
       originalDocument: parse(`query { a }`),
     });
 
-    const data = processedResult.data as any;
+    const data = processedResult.data;
 
     expect(data?.["dashboard"]?.["topActivity"]).toEqual({
       __typename: "Activity",
@@ -365,7 +365,7 @@ describe("resultProcessor", () => {
       originalDocument: parse(`query { a }`),
     });
 
-    const data = processedResult.data as any;
+    const data = processedResult.data;
 
     expect(data?.["dashboard"]?.["topActivity"]).toEqual({
       __typename: "Activity",

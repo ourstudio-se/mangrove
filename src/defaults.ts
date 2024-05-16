@@ -3,6 +3,7 @@ import {
   EntityRecord,
   EntityTypeReference,
   EntityWithLocation,
+  Id,
   Maybe,
   PathPart,
   RunQueryArgs,
@@ -30,11 +31,11 @@ export const defaultBuildResponseCacheKey = (params: {
   );
 
 export function defaultCollectEntityWithLocation(
-  data: any,
+  data: Record<string | number | symbol, unknown>,
   path: readonly PathPart[],
 ): EntityWithLocation | null {
-  const typename = data[ALIAS_ENTITYCACHE_TYPENAME];
-  const id = data[ALIAS_ENTITYCACHE_ID];
+  const typename = data[ALIAS_ENTITYCACHE_TYPENAME] as string;
+  const id = data[ALIAS_ENTITYCACHE_ID] as Id;
 
   if (!typename) {
     return null;

@@ -30,7 +30,6 @@ import {
 } from "../defaults";
 import { getPartialRecacheQuery } from "../getPartialRecacheQuery";
 import { parseSelectionSet } from "../borrowedTools/parseSelectionSet";
-import { link } from "node:fs";
 
 export interface EagerInvalidationStrategyOpts {
   buildEntityKey?: (entity: EntityRecord) => string;

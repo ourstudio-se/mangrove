@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { ExecutionResult, execute as _execute, parse } from "graphql";
 import { Redis } from "ioredis";
 import { animals, uniqueNamesGenerator } from "unique-names-generator";

@@ -52,7 +52,7 @@ function entityTtlFromObjectType(
 }
 
 function cacheResolverFromQueryRootField(
-  fieldConfig: GraphQLFieldConfig<any, any>,
+  fieldConfig: GraphQLFieldConfig<unknown, unknown>,
   fieldName: string,
   schema: GraphQLSchema,
 ): CacheResolverMap {
