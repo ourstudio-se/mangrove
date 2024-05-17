@@ -4,13 +4,13 @@ import { PARTIAL_CACHE_ALIASPREFIX } from "../constants";
 export const noAliasConventionConflictsRule: ValidationRule = (context) => {
   return {
     OperationDefinition(operationDefinitionNode) {
-      let errorNodes: FieldNode[] = [];
+      const errorNodes: FieldNode[] = [];
       for (const selection of operationDefinitionNode.selectionSet.selections) {
         if (selection.kind !== Kind.FIELD) {
           continue;
         }
         if (selection.alias?.value.startsWith(PARTIAL_CACHE_ALIASPREFIX)) {
-          errorNodes = [...errorNodes, selection];
+          errorNodes.push(selection);
         }
       }
 

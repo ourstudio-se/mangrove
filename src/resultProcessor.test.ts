@@ -177,7 +177,8 @@ describe("resultProcessor", () => {
       originalDocument: parse(`query { a }`),
     });
 
-    const data = processedResult.data;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data = processedResult.data as any;
 
     expect(data?.["dashboard"]?.["topActivity"]).toEqual({
       __typename: "Activity",
@@ -262,7 +263,8 @@ describe("resultProcessor", () => {
       originalDocument: parse(`query { a }`),
     });
 
-    const data = processedResult.data;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data = processedResult.data as any;
 
     expect(data?.["dashboard"]?.["topActivity"]).toEqual({
       __typename: "Activity",
@@ -365,7 +367,8 @@ describe("resultProcessor", () => {
       originalDocument: parse(`query { a }`),
     });
 
-    const data = processedResult.data;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data = processedResult.data as any;
 
     expect(data?.["dashboard"]?.["topActivity"]).toEqual({
       __typename: "Activity",

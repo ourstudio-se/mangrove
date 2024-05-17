@@ -287,21 +287,26 @@ export function collectEntityRecords(
   }
 
   if (isObject(data)) {
-    let records: EntityWithLocation[] = [];
+    const records: EntityWithLocation[] = [];
 
     const entity = collectEntityWithLocation(data, path);
 
     if (entity) {
-      records = [...records, entity];
+      records.push(entity);
     }
 
     for (const key of Object.keys(data)) {
       const nextPath = [...path, { field: key }];
 
-      records = [
-        ...records,
-        ...collectEntityRecords(data[key], collectEntityWithLocation, nextPath),
-      ];
+      const childRecords = collectEntityRecords(
+        data[key],
+        collectEntityWithLocation,
+        nextPath,
+      );
+
+      for (const childRecord of childRecords) {
+        records.push(childRecord);
+      }
     }
 
     return records;
