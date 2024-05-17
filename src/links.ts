@@ -47,7 +47,7 @@ export function makeLinkCollector(
   knownEntities: KnownEntitiesMap,
 ) {
   function _collectLinks(
-    data: any,
+    data: unknown,
     coordinates: string = CoordinateRoot.query,
     link?: TypeLinkWithCoordinates,
   ): TypeLinkWithCoordinates | TypeLinkWithCoordinates[] {
@@ -101,21 +101,23 @@ export function makeLinkCollector(
     }
 
     if (isArray(data)) {
-      let nextLinks: TypeLinkWithCoordinates[] = [];
+      const nextLinks: TypeLinkWithCoordinates[] = [];
       let thisLink: TypeLinkWithCoordinates | undefined;
 
       for (const index of data.keys()) {
         const nextData = data[index];
         const next = _collectLinks(nextData, coordinates, thisLink);
         if (Array.isArray(next)) {
-          nextLinks = [...nextLinks, ...next];
+          for (const item of next) {
+            nextLinks.push(item);
+          }
         } else {
           thisLink = next;
         }
       }
 
       if (thisLink !== undefined) {
-        nextLinks = [...nextLinks, thisLink];
+        nextLinks.push(thisLink);
       }
 
       return nextLinks;
@@ -124,19 +126,19 @@ export function makeLinkCollector(
     return [];
   }
 
-  return function collectLinks(data: any) {
+  return function collectLinks(data: unknown) {
     const linkOrLinks = _collectLinks(data);
     return isArray(linkOrLinks) ? linkOrLinks : [linkOrLinks];
   };
 }
 
 function injectDataByCoordinates(
-  data: any,
+  data: unknown,
   path: readonly string[],
-  injector: (data: any) => any,
-): any {
+  injector: (data: unknown) => unknown,
+): unknown {
   if (isArray(data)) {
-    return data.map((next: any) => {
+    return data.map((next: unknown) => {
       return injectDataByCoordinates(next, path, injector);
     });
   }
@@ -188,7 +190,7 @@ function getEntityLinkMerger(entityData: unknown) {
 export function mergeLink(
   data: ObjMap<unknown>,
   coordinates: string,
-  resolverValue: any,
+  resolverValue: unknown,
 ): void {
   const merge = getEntityLinkMerger(resolverValue);
 
@@ -275,7 +277,7 @@ export function buildLinkQuery(
   resolvers: CacheResolverMap,
   originalOperationName?: string,
 ): { document: DocumentNode; operationName: string } | null {
-  let cacheResolutions: FieldNode[] = [];
+  const cacheResolutions: FieldNode[] = [];
 
   for (const link of links) {
     const resolver = resolvers[link.typename];
@@ -286,10 +288,15 @@ export function buildLinkQuery(
 
     const mapResolutions = getCacheResolutionMapper(resolver);
 
-    cacheResolutions = [
-      ...cacheResolutions,
-      ...mapResolutions(link.ids, link.coordinates, link.selectionSet),
-    ];
+    const resolutions = mapResolutions(
+      link.ids,
+      link.coordinates,
+      link.selectionSet,
+    );
+
+    for (const resolution of resolutions) {
+      cacheResolutions.push(resolution);
+    }
   }
 
   if (cacheResolutions.length === 0) {

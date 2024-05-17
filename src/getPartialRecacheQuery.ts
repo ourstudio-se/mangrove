@@ -25,7 +25,7 @@ export function getPartialRecacheQuery({
     originalDocument = memoInlineFragments(originalDocument);
   }
 
-  let cacheResolutions: readonly FieldNode[] = [];
+  const cacheResolutions: FieldNode[] = [];
   let isNoopDocument = false;
 
   const linkSelections: Record<string, SelectionSetNode> = {};
@@ -117,10 +117,15 @@ export function getPartialRecacheQuery({
 
             const mapResolutions = getCacheResolutionMapper(resolver);
 
-            cacheResolutions = [
-              ...cacheResolutions,
-              ...mapResolutions(Array.from(ids), coordinates, field.selectionSet),
-            ];
+            const resolutions = mapResolutions(
+              ids,
+              coordinates,
+              field.selectionSet,
+            );
+
+            for (const resolution of resolutions) {
+              cacheResolutions.push(resolution);
+            }
           }
         }
 

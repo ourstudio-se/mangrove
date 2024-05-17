@@ -36,18 +36,18 @@ function flagBranchDirty(node: EntityTreeNode): void {
   }
 }
 
-/**
- * TODO(max): Have to rewrite the entire buildEntityTreeNode function to start from nothing,
- * ie presuppose no Coordinate root. The path will always include this root now.
- */
 export function buildEntityTreeNode(
   parentNode: EntityTreeNode,
   ecr: EntityCacheResult,
   resolvers: CacheResolverMap,
-  path: readonly PathPart[] = ecr.path,
+  path: PathPart[] = [...ecr.path],
   flagDirty = false,
 ): EntityTreeNode {
-  const [key, ...rest] = path;
+  const key = path.shift();
+
+  if (!key) {
+    throw new Error("Path is empty");
+  }
 
   const selections = parentNode.selections ?? {};
 
@@ -71,8 +71,8 @@ export function buildEntityTreeNode(
 
   let nextNode = selection.node;
 
-  if (rest.length > 0) {
-    nextNode = buildEntityTreeNode(nextNode, ecr, resolvers, rest, flagDirty);
+  if (path.length > 0) {
+    nextNode = buildEntityTreeNode(nextNode, ecr, resolvers, path, flagDirty);
   } else {
     nextNode.isEntity = true;
 
@@ -116,7 +116,7 @@ export function buildEntityTreeNode(
      * Ugly AF
      * How do we clean this up?
      */
-    if (rest.length === 0) {
+    if (path.length === 0) {
       if (
         ecr.invalidated &&
         ecr.entity.id !== undefined &&
@@ -159,25 +159,25 @@ export function spawnTreeRoot(): EntityTreeNode {
   };
 }
 
-function getSelectionIndices(
-  selections: EntityTreeNodeSelections,
-): Record<string, EntityTreeNodeSelection> {
-  return Object.keys(selections).reduce((indices, key) => {
+function getSelectionIndices(selections: EntityTreeNodeSelections) {
+  return Object.keys(selections).reduce<
+    Record<string, EntityTreeNodeSelection>
+  >((indices, key) => {
     const selection = selections[key];
     const nextNode = selection.node;
-    let res = {
-      ...indices,
-      [nextNode.coordinates]: selection,
-    };
+
+    indices[nextNode.coordinates] = selection;
 
     if (nextNode.selections) {
-      res = {
-        ...res,
-        ...getSelectionIndices(nextNode.selections),
+      const selIndices = getSelectionIndices(nextNode.selections);
+
+      indices = {
+        ...indices,
+        ...selIndices,
       };
     }
 
-    return res;
+    return indices;
   }, {});
 }
 
@@ -203,14 +203,12 @@ class Invalidator {
   }
 
   getCurrentNode(coords = this.getCoordinates()) {
-    // eslint-disable-next-line no-useless-catch
     return this.getCurrentSelection(coords)?.node;
   }
 
   getCurrentSelection(
     coords = this.getCoordinates(),
   ): EntityTreeNodeSelection | undefined {
-    // eslint-disable-next-line no-useless-catch
     return this.selections[coords];
   }
 

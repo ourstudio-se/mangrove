@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { ParseOptions, parse } from "graphql";
 import { SelectionSetNode } from "graphql";
 

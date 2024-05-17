@@ -197,7 +197,7 @@ export const lazyInvalidationStrategy = ({
 
       const operationKey = buildOperationKey(cacheKey);
 
-      let entityReferences: readonly [string, number][] = [];
+      const entityReferences: [string, number][] = [];
 
       for (const { entity, path } of collectedEntities) {
         const entityKey = buildEntityKey(entity);
@@ -208,7 +208,7 @@ export const lazyInvalidationStrategy = ({
         const entityTtl = entityTtls[entity.typename] ?? ttl;
         await pipe.addMembersToSet(entityKey, [[cacheKey, entityTtl]]);
 
-        entityReferences = [...entityReferences, [entityReferenceKey, ttl]];
+        entityReferences.push([entityReferenceKey, ttl]);
       }
 
       await pipe.clear([operationKey]);

@@ -54,7 +54,7 @@ type PipeInstruction =
 
 interface PipeReturnTypes {
   [PipeOp.EXISTS]: number[];
-  [PipeOp.GET]: string | null;
+  [PipeOp.GET]: Buffer | null;
   [PipeOp.KEYS]: string[];
   [PipeOp.SMEMBERS]: string[];
   [PipeOp.ZRANGEBYSCORE]: string[];
@@ -75,8 +75,8 @@ function pipeInstructionKey(i: PipeInstruction) {
 function interpretPipelineInstruction(
   operator: Redis.Redis | Redis.ChainableCommander,
   instruction: PipeInstruction,
-): Promise<any> | null {
-  let res: Promise<any> | Redis.ChainableCommander;
+): Promise<unknown> | null {
+  let res: Promise<unknown> | Redis.ChainableCommander;
   switch (instruction.op) {
     case PipeOp.SMEMBERS:
       res = operator.smembers(instruction.operand);
@@ -104,7 +104,7 @@ function createPipeLoader(
   client: Redis.Redis,
   decompression: (data: Buffer) => MaybePromise<string>,
 ) {
-  const loader = new DataLoader<PipeInstruction, any, string>(
+  const loader = new DataLoader<PipeInstruction, unknown, string>(
     async (instructions) => {
       const singleInstructionMode = instructions.length === 1;
       const operator: Redis.Redis | Redis.ChainableCommander =
@@ -137,44 +137,40 @@ function createPipeLoader(
   );
 
   return {
-    exists: async (
-      ...keys: Redis.RedisKey[]
-    ): Promise<PipeReturnTypes[PipeOp.EXISTS]> => {
-      return await loader.load({
+    exists: async (...keys: Redis.RedisKey[]) => {
+      return loader.load({
         op: PipeOp.EXISTS,
         operand: keys,
-      });
+      }) as Promise<PipeReturnTypes[PipeOp.EXISTS]>;
     },
-    get: async (key: Redis.RedisKey): Promise<PipeReturnTypes[PipeOp.GET]> => {
-      const result = await loader.load({
+    get: async (key: Redis.RedisKey) => {
+      const result = (await loader.load({
         op: PipeOp.GET,
         operand: key,
-      });
+      })) as PipeReturnTypes[PipeOp.GET];
       return result ? decompression(result) : result;
     },
-    keys: (pattern: string): Promise<PipeReturnTypes[PipeOp.KEYS]> => {
+    keys: (pattern: string) => {
       return loader.load({
         op: PipeOp.KEYS,
         operand: pattern,
-      });
+      }) as Promise<PipeReturnTypes[PipeOp.KEYS]>;
     },
-    smembers: (
-      key: Redis.RedisKey,
-    ): Promise<PipeReturnTypes[PipeOp.SMEMBERS]> => {
+    smembers: (key: Redis.RedisKey) => {
       return loader.load({
         op: PipeOp.SMEMBERS,
         operand: key,
-      });
+      }) as Promise<PipeReturnTypes[PipeOp.SMEMBERS]>;
     },
     zrangebyscore: (
       key: Redis.RedisKey,
       min: number | string,
       max: number | string,
-    ): Promise<PipeReturnTypes[PipeOp.ZRANGEBYSCORE]> => {
+    ) => {
       return loader.load({
         op: PipeOp.ZRANGEBYSCORE,
         operand: [key, min, max],
-      });
+      }) as Promise<PipeReturnTypes[PipeOp.ZRANGEBYSCORE]>;
     },
   };
 }

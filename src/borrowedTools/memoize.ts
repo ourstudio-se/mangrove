@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 export function memoize1<F extends (a1: any) => any>(fn: F): F {
   const memoize1cache: WeakMap<
     Record<string, any>,

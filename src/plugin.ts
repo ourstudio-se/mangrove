@@ -15,7 +15,7 @@ import { memoize1 } from "./borrowedTools/memoize";
 import type { Plugin } from "@envelop/core";
 
 export function useMangrove<
-  PluginContext extends Record<string, any> = NonNullable<unknown>,
+  PluginContext extends Record<string, unknown> = NonNullable<unknown>,
 >({
   awaitWriteBeforeResponse,
   invalidationStrategy,
@@ -30,8 +30,7 @@ export function useMangrove<
   getDocumentString = defaultGetDocumentString,
   shouldCacheResult = defaultShouldCacheResult,
   includeExtensionMetadata = typeof process !== "undefined"
-    ? // eslint-disable-next-line dot-notation
-      process.env["NODE_ENV"] === "development" || !!process.env["DEBUG"]
+    ? process.env["NODE_ENV"] === "development" || !!process.env["DEBUG"]
     : false,
 }: UsePartialCacheParameter<PluginContext>): Plugin<PluginContext> {
   enabled = enabled ? memoize1(enabled) : enabled;
@@ -39,6 +38,7 @@ export function useMangrove<
 
   let parser: ParseDocument | undefined;
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let schema: any;
 
   const { getPartialExecutionOpts, storeExecutionResult } =

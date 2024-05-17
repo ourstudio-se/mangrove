@@ -1,5 +1,11 @@
 import { CacheResolver, Id } from "./typings";
-import { FieldNode, Kind, SelectionSetNode, parseValue } from "graphql";
+import {
+  FieldNode,
+  Kind,
+  SelectionSetNode,
+  ValueNode,
+  parseValue,
+} from "graphql";
 import { getCacheResolverAlias } from "./alias";
 import { memoize1 } from "./borrowedTools/memoize";
 
@@ -36,10 +42,18 @@ export const getCacheResolutionMapper = memoize1(
     }
 
     function mapBatchCacheResolution(
-      ids: readonly Id[],
+      ids: Iterable<Id>,
       coordinates: string,
       selectionSet: SelectionSetNode,
     ): FieldNode {
+      const idValues: ValueNode[] = [];
+
+      for (const id of ids) {
+        idValues.push(
+          parseValue(resolver.type === "string" ? `"${id}"` : `${id}`),
+        );
+      }
+
       return {
         alias: {
           kind: Kind.NAME,
@@ -54,9 +68,7 @@ export const getCacheResolutionMapper = memoize1(
             },
             value: {
               kind: Kind.LIST,
-              values: ids.map((id) =>
-                parseValue(resolver.type === "string" ? `"${id}"` : `${id}`),
-              ),
+              values: idValues,
             },
           },
         ],
@@ -70,7 +82,7 @@ export const getCacheResolutionMapper = memoize1(
     }
 
     return function mapCacheResolution(
-      ids: readonly Id[],
+      ids: Iterable<Id>,
       coordinates: string,
       selectionSet: SelectionSetNode,
     ) {
@@ -78,10 +90,22 @@ export const getCacheResolutionMapper = memoize1(
         case true:
           return [mapBatchCacheResolution(ids, coordinates, selectionSet)];
         case false:
-        default:
-          return ids.map((id, index) =>
-            mapSingleCacheResolution(id, coordinates, selectionSet, index),
-          );
+        default: {
+          const resolutions: FieldNode[] = [];
+
+          for (const id of ids) {
+            resolutions.push(
+              mapSingleCacheResolution(
+                id,
+                coordinates,
+                selectionSet,
+                resolutions.length,
+              ),
+            );
+          }
+
+          return resolutions;
+        }
       }
     };
   },

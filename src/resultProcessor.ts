@@ -40,7 +40,7 @@ function resolveNextData(prevData: ObjMap<unknown>, nextData: ObjMap<unknown>) {
   return mergedData;
 }
 
-function cleanupData(data: any): void {
+function cleanupData(data: unknown): void {
   if (isObject(data)) {
     if (ALIAS_ENTITYCACHE_TYPENAME in data) {
       delete data[ALIAS_ENTITYCACHE_TYPENAME];

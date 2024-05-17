@@ -106,25 +106,31 @@ export function strToDataPath(str: string): readonly PathPart[] {
   return str.split(".").map(strToDataPathPart);
 }
 
-export function isObject(value: any): value is Record<string | number | symbol, unknown> {
+export function isObject(
+  value: unknown,
+): value is Record<string | number | symbol, unknown> {
   return isObjectOrArray(value) && !isArray(value);
 }
 
-export function isArray(value: any): value is Array<any> | readonly any[] {
+export function isArray(
+  value: unknown,
+): value is Array<unknown> | readonly unknown[] {
   return Array.isArray(value);
 }
 
-export function isObjectOrArray(value: any): value is object | Array<any> {
+export function isObjectOrArray(
+  value: unknown,
+): value is object | Array<unknown> {
   return typeof value === "object" && value !== null;
 }
 
-export function not<Args extends any[]>(test: (...args: Args) => boolean) {
+export function not<Args extends unknown[]>(test: (...args: Args) => boolean) {
   return (...args: Args) => !test(...args);
 }
 
 export function indexWiseDeepMerge<Target>(
   target: Target,
-  ...sources: any[]
+  ...sources: unknown[]
 ): Target {
   if (!sources.length) {
     return target;
@@ -244,7 +250,7 @@ function inlineFragments(originalDocument: DocumentNode) {
 
 export const memoInlineFragments = memoize1(inlineFragments);
 
-export function gql(strings: TemplateStringsArray, ...values: any[]) {
+export function gql(strings: TemplateStringsArray, ...values: unknown[]) {
   return strings.reduce((acc, str, i) => acc + str + (values[i] || ""), "");
 }
 
@@ -272,7 +278,7 @@ export function attachToCacheExtensions<
 export const memoizedPrint = memoize1(print);
 
 export function collectEntityRecords(
-  data: any,
+  data: unknown,
   collectEntityWithLocation = defaultCollectEntityWithLocation,
   path: readonly PathPart[] = [{ field: CoordinateRoot.query }],
 ): EntityWithLocation[] {
@@ -281,21 +287,26 @@ export function collectEntityRecords(
   }
 
   if (isObject(data)) {
-    let records: EntityWithLocation[] = [];
+    const records: EntityWithLocation[] = [];
 
     const entity = collectEntityWithLocation(data, path);
 
     if (entity) {
-      records = [...records, entity];
+      records.push(entity);
     }
 
     for (const key of Object.keys(data)) {
       const nextPath = [...path, { field: key }];
 
-      records = [
-        ...records,
-        ...collectEntityRecords(data[key], collectEntityWithLocation, nextPath),
-      ];
+      const childRecords = collectEntityRecords(
+        data[key],
+        collectEntityWithLocation,
+        nextPath,
+      );
+
+      for (const childRecord of childRecords) {
+        records.push(childRecord);
+      }
     }
 
     return records;

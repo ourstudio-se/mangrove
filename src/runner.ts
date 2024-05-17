@@ -2,6 +2,7 @@ import {
   BindExecutionArgs,
   BindExecutorRequest,
   CacheResolverMap,
+  EntityRecord,
   KnownEntitiesMap,
   MakeQueryRunnerParameter,
   RunQuery,
@@ -104,7 +105,7 @@ export async function layeredCacheExecute({
 
   let nextResult = await runQuery(partialQuery, originalOperationName);
 
-  let nextResults = [nextResult];
+  const nextResults = [nextResult];
 
   if (!nextResult.data || Object.keys(linkSelections).length === 0) {
     return { linkQueries: [], result: nextResults };
@@ -128,10 +129,10 @@ export async function layeredCacheExecute({
 
     const { document: linkQuery, operationName } = linkQueryResult;
 
-    linkQueries.push(linkQuery);
-
     nextResult = await runQuery(linkQuery, operationName);
-    nextResults = [...nextResults, nextResult];
+
+    linkQueries.push(linkQuery);
+    nextResults.push(nextResult);
   }
 
   return { linkQueries, result: nextResults };
@@ -194,13 +195,17 @@ export function makeQueryRunner({
       originalDocument: args.document,
     });
 
-    const contextValue = args.context ?? ({} as any);
+    const contextValue = (args.context ?? {}) as object;
 
     if ("collectResourceIdentifier" in contextValue) {
       // Dirty hack to trigger live query invalidation
 
       for (const { entity } of collectedEntities ?? []) {
-        contextValue.collectResourceIdentifier(entity);
+        (
+          contextValue.collectResourceIdentifier as (
+            entity: EntityRecord,
+          ) => void
+        )(entity);
       }
     }
 

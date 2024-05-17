@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { ExecutionResult, execute as _execute, parse } from "graphql";
 import { Redis } from "ioredis";
 import { animals, uniqueNamesGenerator } from "unique-names-generator";
@@ -113,7 +114,6 @@ const document = config.parser(
     schema,
   })) as any;
 
-  // eslint-disable-next-line no-console
   console.log(result.data?.items);
 
   items.push({
@@ -131,7 +131,6 @@ const document = config.parser(
     schema,
   })) as any;
 
-  // eslint-disable-next-line no-console
   console.log(result.data?.items);
 
   await invalidateEntities([
@@ -146,7 +145,6 @@ const document = config.parser(
     schema,
   })) as any;
 
-  // eslint-disable-next-line no-console
   console.log(result.data?.items);
 
   items.push(items.shift()!);
@@ -161,7 +159,7 @@ const document = config.parser(
     document,
     schema,
   })) as any;
-  // eslint-disable-next-line no-console
+
   console.log(result.data?.items);
 
   process.exit(0);

@@ -28,7 +28,7 @@ export interface CacheExtension extends ObjMap<unknown> {
 }
 
 export type CachedExecutionResult = ExecutionResult<
-  Record<string, any>,
+  Record<string, unknown>,
   CacheExtension
 >;
 
@@ -79,8 +79,8 @@ export interface TypeLinkWithCoordinates {
 }
 
 export interface Logger {
-  error(...payload: any[]): void;
-  warn(...payload: any[]): void;
+  error(...payload: unknown[]): void;
+  warn(...payload: unknown[]): void;
 }
 
 export interface PartialExecutionOpts {
@@ -176,7 +176,7 @@ export interface CacheResolvedEntity extends ObjMap<unknown> {
 }
 
 export function isCacheResolvedEntity(
-  value: any,
+  value: unknown,
 ): value is CacheResolvedEntity {
   return (
     isObject(value) &&
@@ -212,7 +212,7 @@ export type ShouldCacheResultFunction = (params: {
 }) => boolean;
 
 export type CollectEntityWithLocationFunction = (
-  data: any,
+  data: unknown,
   path: readonly PathPart[],
 ) => EntityWithLocation | null;
 
@@ -239,7 +239,7 @@ export type ResultProcessor = (parameter: ResultProcessorParameter) => Promise<{
 }>;
 
 export interface UsePartialCacheParameter<
-  PluginContext extends Record<string, any> = NonNullable<unknown>,
+  PluginContext extends Record<string, unknown> = NonNullable<unknown>,
 > {
   awaitWriteBeforeResponse?: boolean;
 
@@ -275,7 +275,7 @@ export interface MakeQueryRunnerParameter {
 
   cacheResolvers: CacheResolverMap;
 
-  enabled?(context: any): boolean;
+  enabled?(context: unknown): boolean;
 
   formatResult?: FormatResult;
 
@@ -287,7 +287,7 @@ export interface MakeQueryRunnerParameter {
 
   processResult: ResultProcessor;
 
-  session(context: any): string | undefined | null;
+  session(context: unknown): string | undefined | null;
 }
 
 export interface MakeResultFormatterParameter {
@@ -340,7 +340,7 @@ export interface RunQueryArgs {
   context: unknown;
   document: DocumentNode;
   operationName?: string;
-  variables: any;
+  variables?: Record<string, unknown> | null | undefined;
 }
 
 export type KnownEntitiesMap = Record<string, Set<Id>>;
