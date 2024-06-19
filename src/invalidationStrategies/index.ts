@@ -1,2 +1,2 @@
-export * from "./lazyInvalidationStrategy";
-export * from "./eagerInvalidationStrategy";
+export * from "./lazyInvalidationStrategy.js";
+export * from "./eagerInvalidationStrategy.js";

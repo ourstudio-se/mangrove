@@ -7,12 +7,12 @@ import {
   SerializedKnownEntitiesMap,
   isCacheResolvedEntityList,
   isListPathPart,
-} from "./typings";
+} from "./typings.js";
 import {
   CoordinateRoot,
   PARTIAL_CACHE_ALIASPREFIX,
   ROOT_ENTITY_ID,
-} from "./constants";
+} from "./constants.js";
 import {
   DocumentNode,
   ExecutionResult,
@@ -25,8 +25,8 @@ import {
   print,
   visit,
 } from "graphql";
-import { defaultCollectEntityWithLocation } from "./defaults";
-import { memoize1 } from "./borrowedTools/memoize";
+import { defaultCollectEntityWithLocation } from "./defaults.js";
+import { memoize1 } from "./borrowedTools/memoize.js";
 
 export function isCacheAliasName(nameValue: string) {
   return nameValue.startsWith(PARTIAL_CACHE_ALIASPREFIX);

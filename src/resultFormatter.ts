@@ -4,9 +4,9 @@ import {
   FormatResult,
   FormatResultParameter,
   MakeResultFormatterParameter,
-} from "./typings";
+} from "./typings.js";
 import { ExecutionResult, print } from "graphql";
-import { getKnownEntities, serializeKnownEntities } from "./utils";
+import { getKnownEntities, serializeKnownEntities } from "./utils.js";
 
 function resultWithCacheExtension(
   result: ExecutionResult,

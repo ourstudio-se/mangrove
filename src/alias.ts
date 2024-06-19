@@ -1,5 +1,5 @@
-import { PARTIAL_CACHE_ALIASPREFIX } from "./constants";
-import { getCacheAlias } from "./utils";
+import { PARTIAL_CACHE_ALIASPREFIX } from "./constants.js";
+import { getCacheAlias } from "./utils.js";
 
 export class CacheResolutionError extends Error {}
 

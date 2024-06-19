@@ -7,29 +7,29 @@ import {
   Id,
   InvalidationStrategy,
   Logger,
-} from "../typings";
+} from "../typings.js";
 import { DocumentNode, SelectionSetNode, parse, print } from "graphql";
-import { ROOT_ENTITY_ID } from "../constants";
+import { ROOT_ENTITY_ID } from "../constants.js";
 import {
   attachToCacheExtensions,
   collectEntityRecords,
   deserializeKnownEntities,
   getKnownEntities,
   serializeKnownEntities,
-} from "../utils";
-import { buildEntityTreeNode, spawnTreeRoot } from "../tree";
+} from "../utils.js";
+import { buildEntityTreeNode, spawnTreeRoot } from "../tree.js";
 import {
   createCacheSetMemberGetter,
   getAndParseCachedResponse,
   getEntityKeysToInvalidate,
-} from "./utils";
+} from "./utils.js";
 import {
   defaultBuildEntityKey,
   defaultCollectEntityWithLocation,
   defaultParseEntityKey,
-} from "../defaults";
-import { getPartialRecacheQuery } from "../getPartialRecacheQuery";
-import { parseSelectionSet } from "../borrowedTools/parseSelectionSet";
+} from "../defaults.js";
+import { getPartialRecacheQuery } from "../getPartialRecacheQuery.js";
+import { parseSelectionSet } from "../borrowedTools/parseSelectionSet.js";
 
 export interface EagerInvalidationStrategyOpts {
   buildEntityKey?: (entity: EntityRecord) => string;

@@ -8,7 +8,7 @@ import {
   RunQuery,
   RunQueryArgs,
   TypeLinkWithCoordinates,
-} from "./typings";
+} from "./typings.js";
 import {
   DocumentNode,
   ExecutionArgs,
@@ -17,14 +17,14 @@ import {
   SelectionSetNode,
   execute as defaultExecute,
 } from "graphql";
-import { buildLinkQuery, makeLinkCollector } from "./links";
+import { buildLinkQuery, makeLinkCollector } from "./links.js";
 import {
   defaultBuildResponseCacheKey,
   defaultGetDocumentString,
-} from "./defaults";
-import { isAsyncIterable } from "./borrowedTools/isAsyncIterable";
-import { isIntrospectionDocument } from "./utils";
-import { isPromise } from "./borrowedTools/isPromise";
+} from "./defaults.js";
+import { isAsyncIterable } from "./borrowedTools/isAsyncIterable.js";
+import { isIntrospectionDocument } from "./utils.js";
+import { isPromise } from "./borrowedTools/isPromise.js";
 import type { ExecutionRequest, Executor } from "@graphql-tools/utils";
 
 function ensureNonIterableResult(

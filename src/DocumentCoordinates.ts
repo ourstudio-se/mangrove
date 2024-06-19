@@ -1,6 +1,6 @@
 import { ASTNode, ASTVisitor, Kind, getEnterLeaveForKind } from "graphql";
-import { CoordinateRoot } from "./constants";
-import { isNode } from "graphql/language/ast";
+import { CoordinateRoot } from "./constants.js";
+import { isNode } from "graphql/language/ast.js";
 
 export class DocumentCoordinates {
   private _currentCoordinates: string = "";

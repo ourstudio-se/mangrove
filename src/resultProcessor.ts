@@ -1,10 +1,13 @@
-import { ALIAS_ENTITYCACHE_ID, ALIAS_ENTITYCACHE_TYPENAME } from "./constants";
+import {
+  ALIAS_ENTITYCACHE_ID,
+  ALIAS_ENTITYCACHE_TYPENAME,
+} from "./constants.js";
 import {
   EntityWithLocation,
   MakeResultProcessorOpts,
   ObjMap,
   ResultProcessor,
-} from "./typings";
+} from "./typings.js";
 import { ExecutionResult, GraphQLError } from "graphql";
 import {
   collectEntityRecords,
@@ -13,9 +16,9 @@ import {
   isCacheAliasName,
   isObject,
   not,
-} from "./utils";
-import { mergeLink } from "./links";
-import { parseCacheResolverAlias } from "./alias";
+} from "./utils.js";
+import { mergeLink } from "./links.js";
+import { parseCacheResolverAlias } from "./alias.js";
 
 function resolveNextData(prevData: ObjMap<unknown>, nextData: ObjMap<unknown>) {
   const keys = Object.keys(nextData);

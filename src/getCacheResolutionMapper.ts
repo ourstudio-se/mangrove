@@ -1,4 +1,4 @@
-import { CacheResolver, Id } from "./typings";
+import { CacheResolver, Id } from "./typings.js";
 import {
   FieldNode,
   Kind,
@@ -6,8 +6,8 @@ import {
   ValueNode,
   parseValue,
 } from "graphql";
-import { getCacheResolverAlias } from "./alias";
-import { memoize1 } from "./borrowedTools/memoize";
+import { getCacheResolverAlias } from "./alias.js";
+import { memoize1 } from "./borrowedTools/memoize.js";
 
 export const getCacheResolutionMapper = memoize1(
   function getCacheResolutionMapper(resolver: CacheResolver) {

@@ -1,1 +1,1 @@
-export * from "./noAliasConventionConflictsRule";
+export * from "./noAliasConventionConflictsRule.js";

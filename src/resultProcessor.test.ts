@@ -1,7 +1,10 @@
-import { ALIAS_ENTITYCACHE_ID, ALIAS_ENTITYCACHE_TYPENAME } from "./constants";
+import {
+  ALIAS_ENTITYCACHE_ID,
+  ALIAS_ENTITYCACHE_TYPENAME,
+} from "./constants.js";
 import { ExecutionResult, parse } from "graphql";
-import { getCacheAlias } from "./utils";
-import { makeResultProcessor } from "./resultProcessor";
+import { getCacheAlias } from "./utils.js";
+import { makeResultProcessor } from "./resultProcessor.js";
 
 describe("resultProcessor", () => {
   test("collects entities", (done) => {

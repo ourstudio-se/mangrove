@@ -2,7 +2,7 @@ import {
   ALIAS_ENTITYCACHE_ID,
   ALIAS_ENTITYCACHE_TYPENAME,
   DIRECTIVE_NAME_IDFIELD,
-} from "./constants";
+} from "./constants.js";
 import {
   DocumentNode,
   GraphQLSchema,
@@ -11,7 +11,7 @@ import {
   visit,
   visitWithTypeInfo,
 } from "graphql";
-import { memoize1 } from "./borrowedTools/memoize";
+import { memoize1 } from "./borrowedTools/memoize.js";
 
 function getCacheSelections(idField?: string) {
   return [

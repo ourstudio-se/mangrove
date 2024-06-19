@@ -2,13 +2,13 @@ import {
   ALIAS_ENTITYCACHE_ID,
   ALIAS_ENTITYCACHE_TYPENAME,
   PARTIAL_CACHE_ALIASPREFIX,
-} from "./constants";
-import { CacheResolverMap } from "./typings";
-import { bindExecute, layeredCacheExecute } from "./runner";
+} from "./constants.js";
+import { CacheResolverMap } from "./typings.js";
+import { bindExecute, layeredCacheExecute } from "./runner.js";
 import { execute, parse, print } from "graphql";
-import { gql } from "./utils";
+import { gql } from "./utils.js";
 import { makeExecutableSchema } from "@graphql-tools/schema";
-import { parseClientQuery } from "./parser";
+import { parseClientQuery } from "./parser.js";
 import { parseSelectionSet } from "@graphql-tools/utils";
 
 const bindExecuteArgs = bindExecute(execute);

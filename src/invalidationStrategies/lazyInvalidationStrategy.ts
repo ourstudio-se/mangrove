@@ -7,22 +7,22 @@ import {
   InvalidationStrategy,
   KnownEntitiesMap,
   Logger,
-} from "../typings";
+} from "../typings.js";
 import { DocumentNode, SelectionSetNode } from "graphql";
-import { buildEntityTreeNode, spawnTreeRoot } from "../tree";
+import { buildEntityTreeNode, spawnTreeRoot } from "../tree.js";
 import {
   createCacheSetMemberGetter,
   getAndParseCachedResponse,
   getEntityKeysToInvalidate,
-} from "./utils";
+} from "./utils.js";
 import {
   defaultBuildEntityKey,
   defaultBuildEntityReferenceKey,
   defaultBuildLazyOperationKey,
   defaultParseEntityKey,
   defaultParseEntityReferenceKey,
-} from "../defaults";
-import { getPartialRecacheQuery } from "../getPartialRecacheQuery";
+} from "../defaults.js";
+import { getPartialRecacheQuery } from "../getPartialRecacheQuery.js";
 
 export interface LazyInvalidationStrategyOpts {
   buildEntityKey?: (entity: EntityRecord) => string;

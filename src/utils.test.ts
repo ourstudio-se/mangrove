@@ -1,4 +1,4 @@
-import { gql, indexWiseDeepMerge, memoInlineFragments } from "./utils";
+import { gql, indexWiseDeepMerge, memoInlineFragments } from "./utils.js";
 import { parse, print } from "graphql";
 
 describe("inlineFragments", () => {

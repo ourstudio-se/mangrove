@@ -6,11 +6,11 @@ import {
   SelectionSetNode,
   visit,
 } from "graphql";
-import { EntityTreeNode } from "./typings";
-import { convertFieldNodeToLink } from "./links";
-import { getCacheResolutionMapper } from "./getCacheResolutionMapper";
-import { memoInlineFragments, pruneSelectionSet } from "./utils";
-import { visitWithEntityTree } from "./tree";
+import { EntityTreeNode } from "./typings.js";
+import { convertFieldNodeToLink } from "./links.js";
+import { getCacheResolutionMapper } from "./getCacheResolutionMapper.js";
+import { memoInlineFragments, pruneSelectionSet } from "./utils.js";
+import { visitWithEntityTree } from "./tree.js";
 
 export interface GetPartialRecacheQueryParameter {
   entityTree: EntityTreeNode;

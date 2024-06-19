@@ -1,4 +1,4 @@
-import { isArray, isObject } from "./utils";
+import { isArray, isObject } from "./utils.js";
 import type {
   DocumentNode,
   ExecutionArgs,

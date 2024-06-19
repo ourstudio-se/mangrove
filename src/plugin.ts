@@ -1,17 +1,17 @@
-import { ParseDocument, UsePartialCacheParameter } from "./typings";
+import { ParseDocument, UsePartialCacheParameter } from "./typings.js";
 import {
   defaultBuildResponseCacheKey,
   defaultCollectEntityWithLocation,
   defaultGetDocumentString,
   defaultShouldCacheResult,
-} from "./defaults";
-import { getParserFromSchema } from "./parser";
-import { isIntrospectionDocument } from "./utils";
-import { makeBySchemaConfigGenerator } from "./schemaConfig";
-import { makeExecuteWrapper } from "./runner";
-import { makeResultFormatter } from "./resultFormatter";
-import { makeResultProcessor } from "./resultProcessor";
-import { memoize1 } from "./borrowedTools/memoize";
+} from "./defaults.js";
+import { getParserFromSchema } from "./parser.js";
+import { isIntrospectionDocument } from "./utils.js";
+import { makeBySchemaConfigGenerator } from "./schemaConfig.js";
+import { makeExecuteWrapper } from "./runner.js";
+import { makeResultFormatter } from "./resultFormatter.js";
+import { makeResultProcessor } from "./resultProcessor.js";
+import { memoize1 } from "./borrowedTools/memoize.js";
 import type { Plugin } from "@envelop/core";
 
 export function useMangrove<
