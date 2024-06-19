@@ -2,14 +2,14 @@
 import { ExecutionResult, execute as _execute, parse } from "graphql";
 import { Redis } from "ioredis";
 import { animals, uniqueNamesGenerator } from "unique-names-generator";
-import { createRedisCache } from "../../caches/redis";
-import { gql } from "../../utils";
-import { lazyInvalidationStrategy } from "../../invalidationStrategies/lazyInvalidationStrategy";
-import { makeBySchemaConfigGenerator } from "../../schemaConfig";
+import { createRedisCache } from "../../caches/redis.js";
+import { gql } from "../../utils.js";
+import { lazyInvalidationStrategy } from "../../invalidationStrategies/lazyInvalidationStrategy.js";
+import { makeBySchemaConfigGenerator } from "../../schemaConfig.js";
 import { makeExecutableSchema } from "@graphql-tools/schema";
-import { makeExecuteWrapper } from "../../runner";
-import { makeResultFormatter } from "../../resultFormatter";
-import { makeResultProcessor } from "../../resultProcessor";
+import { makeExecuteWrapper } from "../../runner.js";
+import { makeResultFormatter } from "../../resultFormatter.js";
+import { makeResultProcessor } from "../../resultProcessor.js";
 
 interface Item {
   id: string;
@@ -116,13 +116,10 @@ const document = config.parser(
 
   console.log(result.data?.items);
 
-  items.push({
-    id: "3",
-  });
-
   await invalidateEntities([
     {
-      typename: "Query",
+      id: "1",
+      typename: "Item",
     },
   ]);
 
@@ -133,10 +130,13 @@ const document = config.parser(
 
   console.log(result.data?.items);
 
+  items.push({
+    id: "3",
+  });
+
   await invalidateEntities([
     {
-      id: "1",
-      typename: "Item",
+      typename: "Query",
     },
   ]);
 

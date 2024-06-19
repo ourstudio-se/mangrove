@@ -7,13 +7,13 @@ import {
   EntityTreeNodeSelections,
   PathPart,
   isListPathPart,
-} from "./typings";
-import { CoordinateRoot } from "./constants";
+} from "./typings.js";
+import { CoordinateRoot } from "./constants.js";
 import {
   DocumentCoordinates,
   visitWithDocumentCoordinates,
-} from "./DocumentCoordinates";
-import { memoize1 } from "./borrowedTools/memoize";
+} from "./DocumentCoordinates.js";
+import { memoize1 } from "./borrowedTools/memoize.js";
 
 function flagBranchDirty(node: EntityTreeNode): void {
   if (node.isDirty) {

@@ -1,7 +1,7 @@
 import {
   DIRECTIVE_NAME_CACHEENTITY,
   DIRECTIVE_NAME_CACHERESOLVER,
-} from "./constants";
+} from "./constants.js";
 import {
   DirectiveLocation,
   GraphQLDirective,

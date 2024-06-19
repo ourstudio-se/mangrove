@@ -2,11 +2,11 @@ import {
   CacheResolverMap,
   ConfigureFromSchema,
   MakeBySchemaConfigGeneratorParameter,
-} from "./typings";
+} from "./typings.js";
 import {
   DIRECTIVE_NAME_CACHEENTITY,
   DIRECTIVE_NAME_CACHERESOLVER,
-} from "./constants";
+} from "./constants.js";
 import {
   GraphQLFieldConfig,
   GraphQLInt,
@@ -20,7 +20,7 @@ import {
   isObjectType,
 } from "graphql";
 import { getDirective } from "@graphql-tools/utils";
-import { getParserFromSchema } from "./parser";
+import { getParserFromSchema } from "./parser.js";
 
 function isBatchType(type: GraphQLType) {
   while (isNonNullType(type)) {

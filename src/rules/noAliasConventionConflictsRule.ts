@@ -1,5 +1,5 @@
 import { FieldNode, GraphQLError, Kind, ValidationRule } from "graphql";
-import { PARTIAL_CACHE_ALIASPREFIX } from "../constants";
+import { PARTIAL_CACHE_ALIASPREFIX } from "../constants.js";
 
 export const noAliasConventionConflictsRule: ValidationRule = (context) => {
   return {

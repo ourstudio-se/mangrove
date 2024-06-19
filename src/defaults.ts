@@ -1,4 +1,7 @@
-import { ALIAS_ENTITYCACHE_ID, ALIAS_ENTITYCACHE_TYPENAME } from "./constants";
+import {
+  ALIAS_ENTITYCACHE_ID,
+  ALIAS_ENTITYCACHE_TYPENAME,
+} from "./constants.js";
 import {
   EntityRecord,
   EntityTypeReference,
@@ -9,11 +12,11 @@ import {
   RunQueryArgs,
   ShouldCacheResultFunction,
   isListPathPart,
-} from "./typings";
+} from "./typings.js";
 import { ExecutionArgs } from "graphql";
-import { hashSHA256 } from "./hashSHA256";
+import { hashSHA256 } from "./hashSHA256.js";
 import jsonStableStringify from "fast-json-stable-stringify";
-import { dataPathToStr, memoizedPrint, strToDataPath } from "./utils";
+import { dataPathToStr, memoizedPrint, strToDataPath } from "./utils.js";
 
 export const defaultBuildResponseCacheKey = (params: {
   documentString: string;

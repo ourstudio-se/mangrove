@@ -2,7 +2,7 @@ import {
   ALIAS_ENTITYCACHE_ID,
   ALIAS_ENTITYCACHE_TYPENAME,
   CoordinateRoot,
-} from "./constants";
+} from "./constants.js";
 import {
   CacheResolvedEntity,
   CacheResolverMap,
@@ -11,7 +11,7 @@ import {
   TypeLinkWithCoordinates,
   isCacheResolvedEntity,
   isCacheResolvedEntityList,
-} from "./typings";
+} from "./typings.js";
 import {
   DocumentNode,
   FieldNode,
@@ -21,15 +21,15 @@ import {
   SelectionNode,
   SelectionSetNode,
 } from "graphql";
-import { getCacheResolutionMapper } from "./getCacheResolutionMapper";
+import { getCacheResolutionMapper } from "./getCacheResolutionMapper.js";
 import {
   indexWiseDeepMerge,
   isArray,
   isCacheAliasName,
   isId,
   isObject,
-} from "./utils";
-import { parseCacheResolverAlias } from "./alias";
+} from "./utils.js";
+import { parseCacheResolverAlias } from "./alias.js";
 
 const allowedLinkKeys = [ALIAS_ENTITYCACHE_TYPENAME, ALIAS_ENTITYCACHE_ID];
 function dataObjectIsLink(data: object) {

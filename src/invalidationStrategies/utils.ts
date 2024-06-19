@@ -1,4 +1,9 @@
-import { Cache, CachedExecutionResult, EntityRecord, Logger } from "../typings";
+import {
+  Cache,
+  CachedExecutionResult,
+  EntityRecord,
+  Logger,
+} from "../typings.js";
 
 export function createCacheSetMemberGetter(cache: Cache) {
   const memoizedEntities = new Map<string, string[]>();

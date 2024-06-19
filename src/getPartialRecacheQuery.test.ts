@@ -2,13 +2,13 @@ import {
   ALIAS_ENTITYCACHE_ID,
   ALIAS_ENTITYCACHE_TYPENAME,
   PARTIAL_CACHE_ALIASPREFIX,
-} from "./constants";
-import { CacheResolverMap, EntityCacheResult, Id } from "./typings";
-import { buildEntityTreeNode, spawnTreeRoot } from "./tree";
-import { getPartialRecacheQuery } from "./getPartialRecacheQuery";
-import { gql, strToDataPath } from "./utils";
+} from "./constants.js";
+import { CacheResolverMap, EntityCacheResult, Id } from "./typings.js";
+import { buildEntityTreeNode, spawnTreeRoot } from "./tree.js";
+import { getPartialRecacheQuery } from "./getPartialRecacheQuery.js";
+import { gql, strToDataPath } from "./utils.js";
 import { parse, print, stripIgnoredCharacters } from "graphql";
-import { parseClientQuery } from "./parser";
+import { parseClientQuery } from "./parser.js";
 
 // Mock entity creators functions
 function _Entity(

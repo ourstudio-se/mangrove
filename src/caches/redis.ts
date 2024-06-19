@@ -1,8 +1,8 @@
 import DataLoader from "dataloader";
 import type * as Redis from "ioredis";
 import { Cache, CacheMutations, MaybePromise } from "../typings";
-import { CacheValidationError } from "./errors";
-import { isPromise } from "../borrowedTools/isPromise";
+import { CacheValidationError } from "./errors.js";
+import { isPromise } from "../borrowedTools/isPromise.js";
 
 function makeTTLOffset(ttl: number, now: number) {
   return now + ttl;
