@@ -60,7 +60,9 @@ const typeDefs = (withResolvers: boolean) => `
 
 const QUERIES: [string, Record<string, unknown>?][] = [
   [`{ items { id name owner { id name } } }`],
-  [`{ featured { id name tags { id label } owner { id name items { id name } } } }`],
+  [
+    `{ featured { id name tags { id label } owner { id name items { id name } } } }`,
+  ],
   [
     `query Q($p: String) { owners { id name items { id note(prefix: $p) tags { label } } } }`,
     { p: ">" },
@@ -69,7 +71,9 @@ const QUERIES: [string, Record<string, unknown>?][] = [
     `fragment I on Item { id name owner { name } }
      query S { search { ... on Item { ...I } ... on Owner { id name } } top: featured { ...I } }`,
   ],
-  [`{ items { id tags { id label } } a: featured { id } b: featured { name } }`],
+  [
+    `{ items { id tags { id label } } a: featured { id } b: featured { name } }`,
+  ],
 ];
 
 interface State {
@@ -112,7 +116,9 @@ function makeResolvers(state: State) {
     },
     Owner: {
       items: (o: any) =>
-        state.itemOrder.filter((id) => state.items[id].owner === o.id).map(item),
+        state.itemOrder
+          .filter((id) => state.items[id].owner === o.id)
+          .map(item),
     },
     Query: {
       featured: () => (state.featured ? item(state.featured) : null),
@@ -224,7 +230,7 @@ const MUTATIONS: [string, Mutation][] = [
   [
     "change featured",
     (s, r) => {
-      s.featured = r() < 0.2 ? null : (pick(r, s.itemOrder) ?? null);
+      s.featured = r() < 0.2 ? null : pick(r, s.itemOrder) ?? null;
       return [{ typename: "Query" }];
     },
   ],
@@ -287,7 +293,8 @@ for (const [backend, getFactory, available] of backends) {
                 variableValues: variables,
               });
               const { result, executed } = await h.run(query, { variables });
-              const { extensions: _extensions, ...actual } = result;
+              const actual = { ...result };
+              delete actual.extensions;
 
               if (JSON.stringify(actual) !== JSON.stringify(expected)) {
                 throw new Error(

@@ -273,6 +273,54 @@ for (const [backend, getFactory, available] of backends) {
         expect((result.data as any).item.data).toBe("v2");
       });
 
+      test("a slow request can't overwrite a newer result with stale data", async () => {
+        const item = { data: "v1", id: "1" };
+        const gate = deferred();
+        const started = deferred();
+        let gateNext = false;
+        const h = createHarness({
+          cache: await createCache(),
+          resolvers: {
+            Item: {
+              data: async (parent: any) => {
+                const value = parent.data;
+                if (parent.gated) {
+                  started.resolve();
+                  await gate.promise;
+                }
+                return value;
+              },
+            },
+            Query: {
+              item: () => {
+                const gated = gateNext;
+                gateNext = false;
+                return { ...item, gated };
+              },
+            },
+          },
+          typeDefs: `type Query { item: Item! } type Item { id: ID! data: String! }`,
+        });
+        const query = `{ item { id data } }`;
+
+        // A: starts before the change and is slow.
+        gateNext = true;
+        const slow = h.run(query);
+        await started.promise;
+
+        item.data = "v2";
+        await h.strategy.invalidateEntities([{ id: "1", typename: "Item" }]);
+
+        // B: starts after the change and stores first.
+        expect(((await h.run(query)).result.data as any).item.data).toBe("v2");
+
+        // A stores last.
+        gate.resolve();
+        expect(((await slow).result.data as any).item.data).toBe("v1");
+
+        expect(((await h.run(query)).result.data as any).item.data).toBe("v2");
+      });
+
       test("cache hits don't write back, and don't extend the expiry", async () => {
         const setTime = fakeDate();
         const { cache, counter } = countingCache(await createCache());

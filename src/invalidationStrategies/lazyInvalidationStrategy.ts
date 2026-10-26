@@ -289,8 +289,14 @@ export const lazyInvalidationStrategy = ({
         references.add(serializeReference(entity, path));
       }
 
-      const pipe = cache.getPipe();
       const operationKey = buildOperationKey(cacheKey);
+
+      // Never overwrite a result stored by a request that started later.
+      const pipe = cache.getPipe({
+        epoch: cacheState.epoch,
+        key: `${operationKey}:epoch`,
+        ttl: remaining,
+      });
 
       for (const [entityKey, { entity, memberTtl }] of entities) {
         if (!(memberTtl > 0)) {

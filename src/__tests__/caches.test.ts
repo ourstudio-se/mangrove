@@ -118,6 +118,35 @@ for (const [backend, getFactory, available] of backends) {
       expect(await cache.isSetMember("s", "m")).toBe(true);
     });
 
+    test("conditional pipes don't overwrite writes from later epochs", async () => {
+      const cache = await getFactory()();
+      const condition = (epoch: number) => ({
+        epoch,
+        key: "op:epoch",
+        ttl: 60_000,
+      });
+
+      const newer = cache.getPipe(condition(2));
+      await newer.set("result", "new", 60_000);
+      await newer.addMembersToSet("Item:1", [["op", 60_000]]);
+      await newer.execute();
+
+      const older = cache.getPipe(condition(1));
+      await older.set("result", "old", 60_000);
+      await older.clear(["Item:1"]);
+      await older.addMembersToSet("Item:2", [["op", 60_000]]);
+      await older.execute();
+
+      expect(await cache.get("result")).toBe("new");
+      expect(await cache.isSetMember("Item:1", "op")).toBe(true);
+      expect(await cache.isSetMember("Item:2", "op")).toBe(false);
+
+      const same = cache.getPipe(condition(2));
+      await same.set("result", "same epoch", 60_000);
+      await same.execute();
+      expect(await cache.get("result")).toBe("same epoch");
+    });
+
     test("rejects non-positive TTLs", async () => {
       const cache = await getFactory()();
       await expect(cache.set("k", "v", 0)).rejects.toThrow();

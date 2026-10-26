@@ -3,6 +3,7 @@ import {
   Cache,
   CacheMutations,
   InvalidateParameter,
+  StoreCondition,
 } from "../typings.js";
 import { CacheValidationError } from "./errors.js";
 
@@ -32,6 +33,7 @@ export function createMemoryCache({
   const values = new Map<string, Expiring<string>>();
   const sets = new Map<string, Expiring<Map<string, number>>>();
   const markers = new Map<string, Expiring<number>>();
+  const claims = new Map<string, Expiring<number>>();
   let epoch = 0;
 
   function live<T>(map: Map<string, Expiring<T>>, key: string): T | undefined {
@@ -149,7 +151,12 @@ export function createMemoryCache({
     async getEpoch() {
       return epoch;
     },
-    getPipe() {
+    getPipe(condition?: StoreCondition) {
+      if (condition && !(condition.ttl > 0)) {
+        throw new CacheValidationError(
+          `Condition TTL must be positive, got ${condition.ttl}`,
+        );
+      }
       const queue: (() => Promise<void>)[] = [];
       const queued = Object.fromEntries(
         Object.entries(mutations).map(([name, fn]) => [
@@ -165,6 +172,17 @@ export function createMemoryCache({
       return {
         ...queued,
         async execute() {
+          if (condition) {
+            const claimed = live(claims, condition.key);
+            if (claimed !== undefined && claimed > condition.epoch) {
+              queue.length = 0;
+              return;
+            }
+            claims.set(condition.key, {
+              expiresAt: now() + condition.ttl,
+              value: condition.epoch,
+            });
+          }
           // The operations have no await points, so starting them all in the
           // same tick applies them atomically.
           await Promise.all(queue.splice(0).map((op) => op()));

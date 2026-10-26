@@ -150,6 +150,16 @@ export interface AddMembersOptions {
   onlyNew?: boolean;
 }
 
+/**
+ * Makes a pipe's mutations conditional: they only apply if no pipe with the
+ * same key and a later epoch has been executed before (within `ttl`).
+ */
+export interface StoreCondition {
+  epoch: number;
+  key: string;
+  ttl: number;
+}
+
 export interface InvalidateParameter {
   /** Index sets: every member is a key that is deleted, as is the set itself. */
   indexes?: Iterable<string>;
@@ -177,8 +187,11 @@ export interface Cache extends CacheMutations {
   get(key: string): Promise<string | null>;
   /** The current invalidation epoch. Read before a request touches any data. */
   getEpoch(): Promise<number>;
-  /** Mutations queued on a pipe are applied atomically by `execute()`. */
-  getPipe(): CachePipe;
+  /**
+   * Mutations queued on a pipe are applied atomically by `execute()`, and
+   * only if the optional condition holds.
+   */
+  getPipe(condition?: StoreCondition): CachePipe;
   getSetMembers(key: string): Promise<string[]>;
   /**
    * Atomically bumps the invalidation epoch, records it for every marker and

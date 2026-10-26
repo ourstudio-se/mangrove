@@ -5,6 +5,7 @@ import {
   CachePipe,
   InvalidateParameter,
   MaybePromise,
+  StoreCondition,
 } from "../typings.js";
 import DataLoader from "dataloader";
 import type * as Redis from "ioredis";
@@ -33,34 +34,80 @@ export interface CreateRedisCacheOpts {
 }
 
 /*
- * KEYS[1]     set key
- * KEYS[2..]   invalidation marker keys
- * ARGV[1]     guard epoch, or "" for no guard
- * ARGV[2]     now (ms)
- * ARGV[3]     "z" (sorted set) or "s" (set)
- * ARGV[4]     "1" to only add new members, "0" to also extend existing ones
- * ARGV[5..]   expiresAt, member pairs
+ * Writes in a conditional pipe only apply if the pipe's claim succeeded,
+ * i.e. if the condition key still holds the pipe's epoch.
+ *
+ * KEYS[1]     condition key
+ * ARGV[1]     epoch, or "" for unconditional writes
  */
-const ADD_MEMBERS_SCRIPT = `
-local guard = ARGV[1]
+const CONDITION_CHECK = `
+if ARGV[1] ~= "" and redis.call("GET", KEYS[1]) ~= ARGV[1] then
+  return 0
+end
+`;
+
+/*
+ * KEYS[1]     condition key
+ * ARGV[1]     epoch
+ * ARGV[2]     TTL (ms)
+ */
+const CLAIM_SCRIPT = `
+local current = redis.call("GET", KEYS[1])
+if current and tonumber(current) > tonumber(ARGV[1]) then
+  return 0
+end
+redis.call("SET", KEYS[1], ARGV[1], "PX", ARGV[2])
+return 1
+`;
+
+/*
+ * KEYS[1]     condition key
+ * KEYS[2]     key
+ * ARGV[1]     condition epoch, or ""
+ * ARGV[2]     "set" or "del"
+ * ARGV[3]     value (set)
+ * ARGV[4]     TTL in ms (set)
+ */
+const WRITE_SCRIPT = `${CONDITION_CHECK}
+if ARGV[2] == "set" then
+  redis.call("SET", KEYS[2], ARGV[3], "PX", ARGV[4])
+else
+  redis.call("DEL", KEYS[2])
+end
+return 1
+`;
+
+/*
+ * KEYS[1]     condition key
+ * KEYS[2]     set key
+ * KEYS[3..]   invalidation marker keys
+ * ARGV[1]     condition epoch, or ""
+ * ARGV[2]     guard epoch, or "" for no guard
+ * ARGV[3]     now (ms)
+ * ARGV[4]     "z" (sorted set) or "s" (set)
+ * ARGV[5]     "1" to only add new members, "0" to also extend existing ones
+ * ARGV[6..]   expiresAt, member pairs
+ */
+const ADD_MEMBERS_SCRIPT = `${CONDITION_CHECK}
+local guard = ARGV[2]
 if guard ~= "" then
   local epoch = tonumber(guard)
-  for i = 2, #KEYS do
+  for i = 3, #KEYS do
     local invalidatedAt = redis.call("GET", KEYS[i])
     if invalidatedAt and tonumber(invalidatedAt) > epoch then
       return 0
     end
   end
 end
-local key = KEYS[1]
-local now = tonumber(ARGV[2])
-local sorted = ARGV[3] == "z"
-local onlyNew = ARGV[4] == "1"
+local key = KEYS[2]
+local now = tonumber(ARGV[3])
+local sorted = ARGV[4] == "z"
+local onlyNew = ARGV[5] == "1"
 local maxExpiresAt = 0
 if sorted then
   redis.call("ZREMRANGEBYSCORE", key, "-inf", now)
 end
-for i = 5, #ARGV, 2 do
+for i = 6, #ARGV, 2 do
   local expiresAt = tonumber(ARGV[i])
   local member = ARGV[i + 1]
   if sorted then
@@ -124,24 +171,34 @@ end
 return epoch
 `;
 
+const SCRIPTS = {
+  mangroveAddMembers: ADD_MEMBERS_SCRIPT,
+  mangroveClaim: CLAIM_SCRIPT,
+  mangroveInvalidate: INVALIDATE_SCRIPT,
+  mangroveWrite: WRITE_SCRIPT,
+};
+
 const ADD_MEMBERS_COMMAND = "mangroveAddMembers";
+const CLAIM_COMMAND = "mangroveClaim";
 const INVALIDATE_COMMAND = "mangroveInvalidate";
+const WRITE_COMMAND = "mangroveWrite";
 
 type CommandClient = Redis.Redis | Redis.ChainableCommander;
+
+type ScriptArgument = string | number | Buffer;
 
 type ScriptCommand = (
   this: CommandClient,
   numKeys: number,
-  ...args: (string | number)[]
+  ...args: ScriptArgument[]
 ) => unknown;
 
 function defineScripts(client: Redis.Redis) {
   const commands = client as unknown as Record<string, unknown>;
-  if (typeof commands[ADD_MEMBERS_COMMAND] !== "function") {
-    client.defineCommand(ADD_MEMBERS_COMMAND, { lua: ADD_MEMBERS_SCRIPT });
-  }
-  if (typeof commands[INVALIDATE_COMMAND] !== "function") {
-    client.defineCommand(INVALIDATE_COMMAND, { lua: INVALIDATE_SCRIPT });
+  for (const [name, lua] of Object.entries(SCRIPTS)) {
+    if (typeof commands[name] !== "function") {
+      client.defineCommand(name, { lua });
+    }
   }
 }
 
@@ -149,7 +206,7 @@ function callScript(
   operator: CommandClient,
   command: string,
   keys: string[],
-  args: (string | number)[],
+  args: ScriptArgument[],
 ) {
   const fn = (operator as unknown as Record<string, ScriptCommand>)[command];
   return fn.call(operator, keys.length, ...keys, ...args);
@@ -217,7 +274,14 @@ export const createRedisCache = ({
   const epochKey = k("mangrove:epoch");
   const markerKey = (marker: string) => k(`mangrove:invalidated:${marker}`);
 
-  function queueMutations(operator: Redis.ChainableCommander): CacheMutations {
+  function queueMutations(
+    operator: Redis.ChainableCommander,
+    condition?: StoreCondition,
+  ): CacheMutations {
+    // Unconditional writes still need a key in the first slot.
+    const conditionKey = k(condition ? condition.key : "mangrove:epoch");
+    const conditionEpoch = condition ? condition.epoch : "";
+
     return {
       async addMembersToSet(
         key,
@@ -244,8 +308,9 @@ export const createRedisCache = ({
         callScript(
           operator,
           ADD_MEMBERS_COMMAND,
-          [k(key), ...(guard?.markers ?? []).map(markerKey)],
+          [conditionKey, k(key), ...(guard?.markers ?? []).map(markerKey)],
           [
+            conditionEpoch,
             guard ? guard.epoch : "",
             now,
             allowDistinctMemberTTLs ? "z" : "s",
@@ -255,9 +320,13 @@ export const createRedisCache = ({
         );
       },
       async clear(keys) {
-        const prefixed = Array.from(keys, k);
-        if (prefixed.length > 0) {
-          operator.del(...prefixed);
+        for (const key of keys) {
+          callScript(
+            operator,
+            WRITE_COMMAND,
+            [conditionKey, k(key)],
+            [conditionEpoch, "del"],
+          );
         }
       },
       async removeMembersFromSet(key, members) {
@@ -276,14 +345,34 @@ export const createRedisCache = ({
           throw new CacheValidationError(`TTL must be positive, got ${ttl}`);
         }
         const compressed = await compression(data);
-        operator.set(k(key), compressed, "PX", Math.ceil(ttl));
+        callScript(
+          operator,
+          WRITE_COMMAND,
+          [conditionKey, k(key)],
+          [conditionEpoch, "set", compressed, Math.ceil(ttl)],
+        );
       },
     };
   }
 
-  function createPipe(): CachePipe {
+  function createPipe(condition?: StoreCondition): CachePipe {
     const transaction = client.multi();
-    const queued = queueMutations(transaction);
+
+    if (condition) {
+      if (!(condition.ttl > 0)) {
+        throw new CacheValidationError(
+          `Condition TTL must be positive, got ${condition.ttl}`,
+        );
+      }
+      callScript(
+        transaction,
+        CLAIM_COMMAND,
+        [k(condition.key)],
+        [condition.epoch, Math.ceil(condition.ttl)],
+      );
+    }
+
+    const queued = queueMutations(transaction, condition);
     // Compression may be asynchronous; make sure every operation has been
     // queued before the transaction is sent.
     const pending: Promise<void>[] = [];
@@ -313,7 +402,7 @@ export const createRedisCache = ({
       pick: (pipe: CachePipe) => (...args: A) => Promise<void>,
     ) =>
     async (...args: A) => {
-      const pipe = createPipe();
+      const pipe = createPipe(undefined);
       await pick(pipe)(...args);
       await pipe.execute();
     };
