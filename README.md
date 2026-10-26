@@ -503,6 +503,7 @@ Invalidate an entity whenever one of its fields changes, including fields that r
 Mangrove assumes that every change is announced by invalidating the entity whose fields changed, after the change has been committed. Under that assumption, a result served by Mangrove reflects every invalidation that completed before the request started (provided requests take less than `invalidationWindow`), and no part of it is older than `ttl`. In more detail:
 
 - **Invalidations during a request.** Every invalidation bumps an epoch. A request reads the epoch before it reads anything else, and when it stores its result it doesn't mark any entity as valid that has been invalidated since. The next request refetches it.
+- **Concurrent requests.** A request never overwrites a result stored by a request that started after it.
 - **Expiry.** A result keeps the expiry it was first stored with, even when parts of it are refreshed, so `ttl` bounds how old any part of a result can be. Cache hits never write to the cache.
 - **When in doubt, execute.** If a partial execution returns errors, a cache resolver doesn't return an entity, a link can't be resolved, or the cached data turns out to be inconsistent with the fresh data, Mangrove executes the original query instead. Errors are therefore always reported against the client's query.
 
