@@ -61,6 +61,24 @@ export function mapCacheResolutions(
     return [];
   }
 
+  // Root fields returning an interface or union only accept the selections
+  // of the resolved type inside a fragment on it.
+  const resolvedSelectionSet: SelectionSetNode = resolver.abstract
+    ? {
+        kind: Kind.SELECTION_SET,
+        selections: [
+          {
+            kind: Kind.INLINE_FRAGMENT,
+            selectionSet,
+            typeCondition: {
+              kind: Kind.NAMED_TYPE,
+              name: { kind: Kind.NAME, value: typename },
+            },
+          },
+        ],
+      }
+    : selectionSet;
+
   const field = (value: ValueNode, requested: string[]): FieldNode => ({
     alias: {
       kind: Kind.NAME,
@@ -75,7 +93,7 @@ export function mapCacheResolutions(
     ],
     kind: Kind.FIELD,
     name: { kind: Kind.NAME, value: resolver.rootField },
-    selectionSet,
+    selectionSet: resolvedSelectionSet,
   });
 
   if (resolver.batch) {

@@ -132,15 +132,27 @@ export function selectionSetForType(
         return (condition: string) => !others.has(condition);
       })();
 
-  return {
-    ...selectionSet,
-    selections: selectionSet.selections.filter(
-      (selection) =>
-        selection.kind !== Kind.INLINE_FRAGMENT ||
-        !selection.typeCondition ||
-        applies(selection.typeCondition.name.value),
-    ),
-  };
+  function narrow(set: SelectionSetNode): SelectionSetNode {
+    return {
+      ...set,
+      selections: set.selections.flatMap((selection): SelectionNode[] => {
+        if (selection.kind !== Kind.INLINE_FRAGMENT) {
+          return [selection];
+        }
+        if (selection.typeCondition) {
+          return applies(selection.typeCondition.name.value) ? [selection] : [];
+        }
+        // Without a type condition the fragment applies to the same type, so
+        // its own fragments need narrowing too.
+        const inner = narrow(selection.selectionSet);
+        return inner.selections.length > 0
+          ? [{ ...selection, selectionSet: inner }]
+          : [];
+      }),
+    };
+  }
+
+  return narrow(selectionSet);
 }
 
 function nodeCanLink(node: EntityTreeNode | undefined): node is EntityTreeNode {

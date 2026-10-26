@@ -42,10 +42,18 @@ interface LazyCacheState {
    * therefore wasn't refetched.
    */
   validEntityKeys?: string[];
+  /** Version of the cached result this request started from. */
+  version?: string;
 }
 
 interface StoredEnvelope {
   expiresAt: number;
+  /**
+   * Identifies this stored copy. Entity sets vouch for specific versions,
+   * so that one request's memberships never vouch for another request's
+   * data.
+   */
+  version: string;
   /** Coordinates holding objects that aren't identifiable entities. */
   opaque: string[];
   result: CachedExecutionResult;
@@ -73,12 +81,22 @@ function parseEnvelope(serialized: string): StoredEnvelope | null {
   if (
     parsed?.v !== 2 ||
     typeof parsed.expiresAt !== "number" ||
+    typeof parsed.version !== "string" ||
     !Array.isArray(parsed.opaque) ||
     typeof parsed.result !== "object"
   ) {
     return null;
   }
   return parsed;
+}
+
+function createVersion() {
+  return `${Date.now().toString(36)}.${Math.random().toString(36).slice(2)}`;
+}
+
+/** The member of an entity's set vouching for one version of a result. */
+function versionMember(cacheKey: string, version: string) {
+  return `${cacheKey}@${version}`;
 }
 
 function serializeReference(entity: EntityRecord, path: readonly PathPart[]) {
@@ -187,7 +205,10 @@ export const lazyInvalidationStrategy = ({
             async (entityKey) =>
               [
                 entityKey,
-                await cache.isSetMember(entityKey, cacheKey),
+                await cache.isSetMember(
+                  entityKey,
+                  versionMember(cacheKey, envelope.version),
+                ),
               ] as const,
           ),
         ),
@@ -202,6 +223,7 @@ export const lazyInvalidationStrategy = ({
         readAt,
         expiresAt: envelope.expiresAt,
         validEntityKeys: entityKeys.filter((key) => validity.get(key)),
+        version: envelope.version,
       };
 
       let partial: ReturnType<typeof getPartialRecacheQuery>;
@@ -280,14 +302,18 @@ export const lazyInvalidationStrategy = ({
           ? cacheState.expiresAt
           : cacheState.readAt + ttl;
 
-      const remaining = expiresAt - now;
+      // Clamped, in case the clock jumped backwards during the request.
+      const remaining = Math.min(expiresAt - now, ttl);
 
       if (remaining <= 0) {
         return;
       }
 
+      const version = createVersion();
+      const member = versionMember(cacheKey, version);
       const envelope: StoredEnvelope = {
         expiresAt,
+        version,
         opaque: collectOpaqueCoordinates(executionResult.data),
         result: executionResult,
         v: 2,
@@ -316,13 +342,18 @@ export const lazyInvalidationStrategy = ({
 
       const operationKey = buildOperationKey(cacheKey);
 
-      // Never overwrite a result stored by a request that started later.
       // Data of entities that were still valid in the cached result was taken
-      // from the cache, not refetched: it must not be marked valid again.
+      // from the cache, not refetched. Their validity is carried over from
+      // the version that was read, if (and for as long as) it still holds.
+      const inheritedFrom =
+        mergedIntoCachedResult && cacheState.version !== undefined
+          ? versionMember(cacheKey, cacheState.version)
+          : undefined;
       const notRefetched = new Set(
-        mergedIntoCachedResult ? cacheState.validEntityKeys ?? [] : [],
+        inheritedFrom !== undefined ? cacheState.validEntityKeys ?? [] : [],
       );
 
+      // Never overwrite a result stored by a request that started later.
       const pipe = cache.getPipe({
         epoch: cacheState.epoch,
         key: `${operationKey}:epoch`,
@@ -336,18 +367,13 @@ export const lazyInvalidationStrategy = ({
 
         const typeKey = buildEntityKey({ typename: entity.typename });
 
-        if (!notRefetched.has(entityKey)) {
-          await pipe.addMembersToSet(entityKey, [[cacheKey, memberTtl]], {
-            guard: {
-              epoch: cacheState.epoch,
-              markers:
-                entityKey === typeKey ? [entityKey] : [entityKey, typeKey],
-            },
-            // Never extend how long an entity is considered valid for this
-            // operation; only refetched (and thus absent) entities get added.
-            onlyNew: true,
-          });
-        }
+        await pipe.addMembersToSet(entityKey, [[member, memberTtl]], {
+          guard: {
+            epoch: cacheState.epoch,
+            markers: entityKey === typeKey ? [entityKey] : [entityKey, typeKey],
+          },
+          inheritFrom: notRefetched.has(entityKey) ? inheritedFrom : undefined,
+        });
 
         if (entity.id !== undefined) {
           await pipe.addMembersToSet(buildTypeIndexKey(entity.typename), [

@@ -147,6 +147,12 @@ export interface InvalidationGuard {
 export interface AddMembersOptions {
   guard?: InvalidationGuard;
   /**
+   * Carry over an existing member: the members are only added if
+   * `inheritFrom` is still a (live) member of the set, they expire no later
+   * than it does, and it is removed.
+   */
+  inheritFrom?: string;
+  /**
    * Only add members that aren't in the set yet; never extend the expiry of
    * an existing member.
    */
@@ -219,6 +225,11 @@ export interface CacheResolver {
    * resolutions. Filled in from the schema where available.
    */
   typeConditions?: string[];
+  /**
+   * The root field returns an interface or union: resolutions wrap their
+   * selections in a fragment on the resolved type.
+   */
+  abstract?: boolean;
 }
 
 export type CacheResolverMap = Record<string, CacheResolver>;

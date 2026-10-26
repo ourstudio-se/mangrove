@@ -95,8 +95,8 @@ return 1
  * ARGV[3]     "z" (sorted sets) or "s" (sets)
  * ARGV[4]     number of sets
  * ARGV[5..]   per set: marker count, guard epoch (or ""), "1" to only add new
- *             members (never extend existing ones), member count, then
- *             expiresAt, member pairs
+ *             members (never extend existing ones), member to inherit from
+ *             (or ""), member count, then expiresAt, member pairs
  */
 const ADD_MEMBERS_SCRIPT = `${CONDITION_CHECK}
 local now = tonumber(ARGV[2])
@@ -108,9 +108,11 @@ for _ = 1, tonumber(ARGV[4]) do
   local markerCount = tonumber(ARGV[a])
   local guard = ARGV[a + 1]
   local onlyNew = ARGV[a + 2] == "1"
-  local memberCount = tonumber(ARGV[a + 3])
-  a = a + 4
+  local inheritFrom = ARGV[a + 3]
+  local memberCount = tonumber(ARGV[a + 4])
+  a = a + 5
   local skip = false
+  local inheritedExpiresAt = nil
   if guard ~= "" then
     local epoch = tonumber(guard)
     for i = k + 1, k + markerCount do
@@ -121,6 +123,19 @@ for _ = 1, tonumber(ARGV[4]) do
       end
     end
   end
+  if not skip and inheritFrom ~= "" then
+    if sorted then
+      local score = redis.call("ZSCORE", key, inheritFrom)
+      if score and tonumber(score) > now then
+        inheritedExpiresAt = tonumber(score)
+        redis.call("ZREM", key, inheritFrom)
+      else
+        skip = true
+      end
+    elseif redis.call("SREM", key, inheritFrom) == 0 then
+      skip = true
+    end
+  end
   if not skip then
     local maxExpiresAt = 0
     if sorted then
@@ -128,6 +143,9 @@ for _ = 1, tonumber(ARGV[4]) do
     end
     for i = a, a + 2 * memberCount - 1, 2 do
       local expiresAt = tonumber(ARGV[i])
+      if inheritedExpiresAt and inheritedExpiresAt < expiresAt then
+        expiresAt = inheritedExpiresAt
+      end
       local member = ARGV[i + 1]
       if sorted then
         local current = redis.call("ZSCORE", key, member)
@@ -333,7 +351,7 @@ export const createRedisCache = ({
         membersWithTtls,
         options: AddMembersOptions = {},
       ) {
-        const { guard, onlyNew = false } = options;
+        const { guard, inheritFrom, onlyNew = false } = options;
         const now = Date.now();
         const pairs: (string | number)[] = [];
 
@@ -377,6 +395,7 @@ export const createRedisCache = ({
           markers.length,
           guard ? guard.epoch : "",
           onlyNew ? "1" : "0",
+          inheritFrom ?? "",
           pairs.length / 2,
           ...pairs,
         );

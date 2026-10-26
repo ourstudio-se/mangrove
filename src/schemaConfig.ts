@@ -152,7 +152,9 @@ function cacheResolversFromQueryRootField(
   if (isAbstractType(namedType)) {
     // e.g. `node(id: ID!): Node`: resolves every possible type.
     return Object.fromEntries(
-      schema.getPossibleTypes(namedType).map((type) => [type.name, resolver]),
+      schema
+        .getPossibleTypes(namedType)
+        .map((type) => [type.name, { ...resolver, abstract: true }]),
     );
   }
 
@@ -173,6 +175,16 @@ export function withTypeConditions(
   return Object.fromEntries(
     Object.entries(resolvers).map(([typename, resolver]) => {
       const type = schema.getType(typename);
+      const rootFieldType = schema.getQueryType()?.getFields()[
+        resolver.rootField
+      ]?.type;
+      if (
+        resolver.abstract === undefined &&
+        rootFieldType !== undefined &&
+        isAbstractType(getNamedType(rootFieldType))
+      ) {
+        resolver = { ...resolver, abstract: true };
+      }
       if (resolver.typeConditions || !isObjectType(type)) {
         return [typename, resolver];
       }

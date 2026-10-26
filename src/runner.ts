@@ -252,12 +252,25 @@ export function makeQueryRunner({
       return stripMarkers(await runner(args.document, operationName));
     }
 
-    const { result: cachedResult, cacheState } = partialExecutionOpts;
+    const { cacheState } = partialExecutionOpts;
     let { query, linkSelections } = partialExecutionOpts;
+    let cachedResult = partialExecutionOpts.result;
+
+    // Errors stored with a cached result can't be attributed to the parts of
+    // it that would be refetched: such results are only served whole.
+    let { prunedCoordinates, resolutions } = partialExecutionOpts;
+
+    if (cachedResult?.errors?.length && query !== undefined) {
+      cachedResult = undefined;
+      query = args.document;
+      linkSelections = {};
+      prunedCoordinates = undefined;
+      resolutions = undefined;
+    }
 
     const mergeContext = createMergeContext(
       cachedResult?.data,
-      partialExecutionOpts.prunedCoordinates,
+      prunedCoordinates,
       Object.keys(linkSelections),
     );
 
@@ -270,7 +283,7 @@ export function makeQueryRunner({
         linkSelections,
         originalOperationName: operationName ?? operation.name?.value,
         partialQuery: query,
-        resolutions: partialExecutionOpts.resolutions,
+        resolutions,
         resolvers: cacheResolvers,
         runQuery: runner,
         snapshots: mergeContext.snapshots,

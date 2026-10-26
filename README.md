@@ -347,7 +347,7 @@ const executor = pipe(
 );
 ```
 
-Any query executed with the resulting executor should be passed through the `parseClientQuery` utility. The `@idField` directive can be used to teach Mangrove to use a specific field as the ID field of an entity object.
+Any query executed with the resulting executor should be passed through the `parseClientQuery` utility. The `@idField` directive can be used to teach Mangrove to use a specific field as the ID field of an entity object. Without a schema, `parseClientQuery` can't tell the types of id fields apart: if members of a union or implementations of an interface have id fields of different types (e.g. `ID!` and `ID`), mark only one of them with `@idField`, or use `getParserFromSchema` with the server's schema.
 
 ```typescript
 const document = parseClientQuery(

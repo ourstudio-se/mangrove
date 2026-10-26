@@ -110,7 +110,7 @@ export function createMemoryCache({
       options: AddMembersOptions = {},
     ) {
       countWrite();
-      const { guard, onlyNew = false } = options;
+      const { guard, inheritFrom, onlyNew = false } = options;
 
       if (guard) {
         for (const marker of guard.markers) {
@@ -124,13 +124,23 @@ export function createMemoryCache({
       const t = now();
       const members = liveMembers(key) ?? new Map<string, number>();
 
+      let inheritedExpiry = Infinity;
+      if (inheritFrom !== undefined) {
+        const inherited = members.get(inheritFrom);
+        if (inherited === undefined) {
+          return;
+        }
+        inheritedExpiry = inherited;
+        members.delete(inheritFrom);
+      }
+
       for (const [member, ttl] of membersWithTtls) {
         if (!(ttl > 0)) {
           throw new CacheValidationError(
             `Member TTL must be positive, got ${ttl}`,
           );
         }
-        const expiresAt = t + ttl;
+        const expiresAt = Math.min(t + ttl, inheritedExpiry);
         const current = members.get(member);
         if (current === undefined) {
           members.set(member, expiresAt);
@@ -140,13 +150,16 @@ export function createMemoryCache({
       }
 
       if (members.size === 0) {
+        sets.delete(key);
         return;
       }
 
-      sets.set(key, {
-        expiresAt: Math.max(...members.values()),
-        value: members,
-      });
+      let setExpiresAt = 0;
+      for (const memberExpiresAt of members.values()) {
+        setExpiresAt = Math.max(setExpiresAt, memberExpiresAt);
+      }
+
+      sets.set(key, { expiresAt: setExpiresAt, value: members });
     },
     async clear(keys) {
       for (const key of keys) {
