@@ -349,6 +349,46 @@ for (const [backend, getFactory, available] of backends) {
         expect((expired.result.data as any).item.v).toBe(2);
       });
 
+      test("expiry counts from when the data was read, not when it was stored", async () => {
+        const setTime = fakeDate();
+        let version = 1;
+        const gate = deferred();
+        const started = deferred();
+        let gated = true;
+        const h = createHarness({
+          cache: await createCache(),
+          resolvers: {
+            Item: {
+              v: async (item: any) => {
+                if (gated) {
+                  started.resolve();
+                  await gate.promise;
+                }
+                return item.v;
+              },
+            },
+            Query: { item: () => ({ id: "1", v: version }) },
+          },
+          ttl: 1000,
+          typeDefs: `type Query { item: Item! } type Item { id: ID! v: Int! }`,
+        });
+        const query = `{ item { id v } }`;
+
+        // Reads v1 at t=0, stores at t=300.
+        const slow = h.run(query);
+        await started.promise;
+        setTime(300);
+        gated = false;
+        gate.resolve();
+        await slow;
+
+        version = 2;
+        setTime(1050);
+        const { result } = await h.run(query);
+        expect(result.extensions?.cache?.hit).toBe(false);
+        expect((result.data as any).item.v).toBe(2);
+      });
+
       test("a partially refreshed result keeps its original expiry", async () => {
         const setTime = fakeDate();
         const state = { a: 1, b: 1 };

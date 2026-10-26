@@ -30,6 +30,11 @@ export interface LazyInvalidationStrategyOpts {
 interface LazyCacheState {
   /** Invalidation epoch observed before anything was read. */
   epoch: number;
+  /**
+   * When the request started reading. Data fetched by the request is at
+   * most this old, so expiries are computed from it.
+   */
+  readAt: number;
   /** Expiry of the cached result this request started from. */
   expiresAt?: number;
   /**
@@ -58,7 +63,8 @@ function isLazyCacheState(value: unknown): value is LazyCacheState {
   return (
     typeof value === "object" &&
     value !== null &&
-    typeof (value as LazyCacheState).epoch === "number"
+    typeof (value as LazyCacheState).epoch === "number" &&
+    typeof (value as LazyCacheState).readAt === "number"
   );
 }
 
@@ -126,6 +132,7 @@ export const lazyInvalidationStrategy = ({
       query: originalDocument,
       resolvers,
     }) {
+      const readAt = Date.now();
       // The epoch must be read before anything else, so that invalidations
       // that happen while this request runs are detected when storing.
       const epochPromise = cache.getEpoch();
@@ -134,7 +141,7 @@ export const lazyInvalidationStrategy = ({
       const serialized = await serializedPromise;
 
       const uncached = {
-        cacheState: { epoch } satisfies LazyCacheState,
+        cacheState: { epoch, readAt } satisfies LazyCacheState,
         linkSelections: {},
         query: originalDocument,
       };
@@ -192,6 +199,7 @@ export const lazyInvalidationStrategy = ({
 
       const cacheState: LazyCacheState = {
         epoch,
+        readAt,
         expiresAt: envelope.expiresAt,
         validEntityKeys: entityKeys.filter((key) => validity.get(key)),
       };
@@ -262,13 +270,15 @@ export const lazyInvalidationStrategy = ({
       }
 
       const now = Date.now();
+      // Everything fetched by this request is at most as old as the request.
+      const age = Math.max(0, now - cacheState.readAt);
 
       // A merged result is only as fresh as the cached result it was merged
       // into, so it keeps that result's expiry.
       const expiresAt =
         mergedIntoCachedResult && cacheState.expiresAt !== undefined
           ? cacheState.expiresAt
-          : now + ttl;
+          : cacheState.readAt + ttl;
 
       const remaining = expiresAt - now;
 
@@ -292,7 +302,7 @@ export const lazyInvalidationStrategy = ({
       for (const { entity, path } of collectedEntities) {
         const entityKey = buildEntityKey(entity);
         const entityTtl = Math.min(
-          entityTtls[entity.typename] ?? ttl,
+          (entityTtls[entity.typename] ?? ttl) - age,
           remaining,
         );
         const existing = entities.get(entityKey);
