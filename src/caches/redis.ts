@@ -242,57 +242,60 @@ async function addMembersToRegularSet(
   await operator.pexpireat(key, setExpiresAt);
 }
 
+function wrapActions(
+  client: Redis.Redis,
+  operator: Redis.Redis | Redis.ChainableCommander,
+  compression: (data: string) => MaybePromise<TextStream>,
+  allowDistinctMemberTTLs: boolean,
+): CacheMutations {
+  return {
+    async addMembersToSet(key, members) {
+      if (allowDistinctMemberTTLs) {
+        return addMembersToZset(client, operator, key, members);
+      } else {
+        return addMembersToRegularSet(client, operator, key, members);
+      }
+    },
+    async clear(keys) {
+      await operator.del(...keys);
+    },
+    async removeMembersFromSet(key, members) {
+      if (allowDistinctMemberTTLs) {
+        await operator.zrem(key, ...members);
+      } else {
+        await operator.srem(key, ...members);
+      }
+    },
+    async set(key, data, ttl) {
+      const deferredCompression = compression(data);
+
+      let compressedData: TextStream;
+
+      if (isPromise(deferredCompression)) {
+        compressedData = await deferredCompression;
+      } else {
+        compressedData = deferredCompression;
+      }
+
+      if (isPipeline(operator)) {
+        operator.set(key, compressedData, "PX", ttl);
+      } else {
+        await operator.set(key, compressedData, "PX", ttl);
+      }
+    },
+  };
+}
+
 export const createRedisCache = ({
   allowDistinctMemberTTLs = true,
   compression = (data) => data,
   client,
   decompression = (data) => data.toString(),
 }: CreateRedisCacheOpts): Cache => {
-  function wrapActions(
-    operator: Redis.Redis | Redis.ChainableCommander,
-  ): CacheMutations {
-    return {
-      async addMembersToSet(key, members) {
-        if (allowDistinctMemberTTLs) {
-          return addMembersToZset(client, operator, key, members);
-        } else {
-          return addMembersToRegularSet(client, operator, key, members);
-        }
-      },
-      async clear(keys) {
-        await operator.del(...keys);
-      },
-      async removeMembersFromSet(key, members) {
-        if (allowDistinctMemberTTLs) {
-          await operator.zrem(key, ...members);
-        } else {
-          await operator.srem(key, ...members);
-        }
-      },
-      async set(key, data, ttl) {
-        const deferredCompression = compression(data);
-
-        let compressedData: TextStream;
-
-        if (isPromise(deferredCompression)) {
-          compressedData = await deferredCompression;
-        } else {
-          compressedData = deferredCompression;
-        }
-
-        if (isPipeline(operator)) {
-          operator.set(key, compressedData, "PX", ttl);
-        } else {
-          await operator.set(key, compressedData, "PX", ttl);
-        }
-      },
-    };
-  }
-
   const loader = createPipeLoader(client, decompression);
 
   return {
-    ...wrapActions(client),
+    ...wrapActions(client, client, compression, allowDistinctMemberTTLs),
     async exists(key) {
       const [res] = await loader.exists(key);
       return res === 1;
@@ -306,7 +309,13 @@ export const createRedisCache = ({
     getPipe() {
       const pipeline = client.pipeline();
 
-      const mutations = wrapActions(pipeline);
+      const mutations = wrapActions(
+        client,
+        pipeline,
+        compression,
+        allowDistinctMemberTTLs,
+      );
+
       return {
         ...mutations,
         async execute() {

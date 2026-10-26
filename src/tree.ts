@@ -116,16 +116,29 @@ export function buildEntityTreeNode(
      * Ugly AF
      * How do we clean this up?
      */
-    if (path.length === 0) {
-      if (
-        ecr.invalidated &&
-        ecr.entity.id !== undefined &&
-        !requiredIds.has(ecr.entity.id)
-      ) {
-        requiredIds.add(ecr.entity.id);
-      }
-    } else if (list && key.id !== undefined && !requiredIds.has(key.id)) {
+    // if (path.length === 0) {
+    //   if (
+    //     ecr.invalidated &&
+    //     ecr.entity.id !== undefined &&
+    //     !requiredIds.has(ecr.entity.id)
+    //   ) {
+    //     requiredIds.add(ecr.entity.id);
+    //   }
+    // }
+
+    if (
+      path.length !== 0 &&
+      list &&
+      key.id !== undefined &&
+      !requiredIds.has(key.id)
+    ) {
       requiredIds.add(key.id);
+    } else if (
+      ecr.invalidated &&
+      ecr.entity.id !== undefined &&
+      !requiredIds.has(ecr.entity.id)
+    ) {
+      requiredIds.add(ecr.entity.id);
     }
   }
 

@@ -5,7 +5,7 @@ import { isNode } from "graphql/language/ast.js";
 export class DocumentCoordinates {
   private _currentCoordinates: string = "";
 
-  private _pathCache: Record<string, readonly string[]> = {};
+  private _pathCache = new Map<string, readonly string[]>();
 
   enter(node: ASTNode) {
     switch (node.kind) {
@@ -31,13 +31,13 @@ export class DocumentCoordinates {
   }
 
   getPath(): readonly string[] {
-    if (this._pathCache[this._currentCoordinates]) {
-      return this._pathCache[this._currentCoordinates];
+    if (this._pathCache.has(this._currentCoordinates)) {
+      return this._pathCache.get(this._currentCoordinates)!;
     }
 
     const path = this._currentCoordinates.split(".");
 
-    this._pathCache[this._currentCoordinates] = path;
+    this._pathCache.set(this._currentCoordinates, path);
     return path;
   }
 
