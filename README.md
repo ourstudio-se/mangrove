@@ -506,6 +506,7 @@ Mangrove assumes that every change is announced by invalidating the entity whose
 
 - **Invalidations during a request.** Every invalidation bumps an epoch. A request reads the epoch before it reads anything else, and when it stores its result it doesn't mark any entity as valid that has been invalidated since. The next request refetches it.
 - **Concurrent requests.** A request never overwrites a result stored by a request that started after it.
+- **Versioned results.** Entity sets vouch for a specific stored version of a result. A request that keeps cached data for an entity can only carry that entity's validity over from the version it read, if it is still valid, and never beyond its original expiry. Expiring entities, keys deleted directly, and concurrent writers therefore can't make stale data look valid.
 - **Expiry.** A result keeps the expiry it was first stored with, even when parts of it are refreshed, so `ttl` bounds how old any part of a result can be. Cache hits never write to the cache.
 - **When in doubt, execute.** If a partial execution returns errors, a cache resolver doesn't return every entity it was asked for, a link can't be resolved, or the cached data turns out to be inconsistent with the fresh data, Mangrove executes the original query instead. Errors are therefore always reported against the client's query.
 - **Entity TTLs.** Refreshing part of a result never extends how long the entities that weren't refetched are considered valid.
@@ -515,6 +516,21 @@ Mangrove assumes that every change is announced by invalidating the entity whose
 - **Cache resolvers bypass parent resolvers.** An entity reached through a cache resolver (e.g. `item(id:)`) is fetched without going through the path in the original query. Any authorization or filtering done by parent resolvers on that path is skipped; make sure cache resolvers apply the same rules.
 - **Only queries are cached.** Mutations and subscriptions are executed as usual. Documents that contain a mutation or subscription are not decorated at all.
 - **Sessions.** Anything that changes the result of a query besides its document and variables (the user, their roles, the locale, ...) must be part of the session id.
+
+## Performance
+
+`scripts/bench.mjs` runs a query for 200 items (each with an owner and three tags, with cache resolvers for items and owners) against a local Redis. Median latencies on a laptop, with the result written before responding (`awaitWriteBeforeResponse`):
+
+| | 0.1.5 | 0.2.0 |
+|---|---|---|
+| Plain execution, no cache | 1.3 ms | 1.3 ms |
+| Cache miss | 52 ms | 18 ms |
+| Cache hit | 53 ms | 7 ms |
+| Partial refresh (one item, one owner, or list reordered) | 53–54 ms | 18–19 ms |
+
+```bash
+yarn build && nice node scripts/bench.mjs lib/cjs
+```
 
 ## Upgrading from 0.1
 
