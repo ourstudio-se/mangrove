@@ -14,9 +14,12 @@ import {
   SelectionNode,
   TypeInfo,
   isAbstractType,
+  isInterfaceType,
+  isObjectType,
   visit,
   visitWithTypeInfo,
 } from "graphql";
+import { idMarkerAlias } from "./markers.js";
 import { memoize1 } from "./borrowedTools/memoize.js";
 
 function typenameSelection(): FieldNode {
@@ -27,15 +30,30 @@ function typenameSelection(): FieldNode {
   };
 }
 
-function idSelection(idField: string): FieldNode {
+function idSelection(idField: string, alias = ALIAS_ENTITYCACHE_ID): FieldNode {
   return {
-    alias: { kind: Kind.NAME, value: ALIAS_ENTITYCACHE_ID },
+    alias: { kind: Kind.NAME, value: alias },
     kind: Kind.FIELD,
     name: { kind: Kind.NAME, value: idField },
   };
 }
 
+/** The id marker for `idField` of a type, typed after the field's type. */
+function schemaIdSelection(
+  schema: GraphQLSchema,
+  typename: string,
+  idField: string,
+): FieldNode {
+  const type = schema.getType(typename);
+  const fieldType =
+    isObjectType(type) || isInterfaceType(type)
+      ? type.getFields()[idField]?.type.toString()
+      : undefined;
+  return idSelection(idField, idMarkerAlias(fieldType));
+}
+
 function idOnTypeSelection(
+  schema: GraphQLSchema,
   typename: string,
   idField: string,
 ): InlineFragmentNode {
@@ -43,7 +61,7 @@ function idOnTypeSelection(
     kind: Kind.INLINE_FRAGMENT,
     selectionSet: {
       kind: Kind.SELECTION_SET,
-      selections: [idSelection(idField)],
+      selections: [schemaIdSelection(schema, typename, idField)],
     },
     typeCondition: {
       kind: Kind.NAMED_TYPE,
@@ -127,12 +145,14 @@ function getMarkerSelections(
   const idField = idFieldByTypeName.get(parentType.name);
 
   if (idField) {
-    selections.push(idSelection(idField));
+    selections.push(schemaIdSelection(schema, parentType.name, idField));
   } else if (isAbstractType(parentType)) {
     for (const possibleType of schema.getPossibleTypes(parentType)) {
       const possibleIdField = idFieldByTypeName.get(possibleType.name);
       if (possibleIdField) {
-        selections.push(idOnTypeSelection(possibleType.name, possibleIdField));
+        selections.push(
+          idOnTypeSelection(schema, possibleType.name, possibleIdField),
+        );
       }
     }
   }

@@ -18,6 +18,7 @@ function createNode(coordinates: string): EntityTreeNode {
   return {
     children: new Map(),
     coordinates,
+    hasOpaqueObjects: false,
     isDirty: false,
     isEntity: false,
     isInvalidated: false,
@@ -48,6 +49,7 @@ export interface EntityTree {
 export function buildEntityTree(
   entities: Iterable<EntityCacheResult>,
   resolvers: CacheResolverMap,
+  opaqueCoordinates: Iterable<string> = [],
 ): EntityTree {
   const root = createNode(CoordinateRoot.query);
   const nodes = new Map<string, EntityTreeNode>([[root.coordinates, root]]);
@@ -90,6 +92,13 @@ export function buildEntityTree(
     }
   }
 
+  for (const coordinates of opaqueCoordinates) {
+    const node = nodes.get(coordinates);
+    if (node) {
+      node.hasOpaqueObjects = true;
+    }
+  }
+
   finalizeEntityTree(root, resolvers, invalidatedPaths, invalidatedEntities);
 
   return { nodes, resolverTypenames: new Set(Object.keys(resolvers)), root };
@@ -108,7 +117,7 @@ function computeLinkability(node: EntityTreeNode, resolvers: CacheResolverMap) {
   node.resolvers = {};
   node.linkable = false;
 
-  if (node.isEntity && node.typenames.size > 0) {
+  if (node.isEntity && !node.hasOpaqueObjects && node.typenames.size > 0) {
     let all = true;
     for (const typename of node.typenames) {
       const resolver = resolvers[typename];

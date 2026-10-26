@@ -11,7 +11,10 @@ import {
 } from "./defaults.js";
 import { GraphQLSchema } from "graphql";
 import { isIntrospectionDocument } from "./utils.js";
-import { makeBySchemaConfigGenerator } from "./schemaConfig.js";
+import {
+  makeBySchemaConfigGenerator,
+  withTypeConditions,
+} from "./schemaConfig.js";
 import { makeExecuteWrapper } from "./runner.js";
 import { makeResultFormatter } from "./resultFormatter.js";
 import { makeResultProcessor } from "./resultProcessor.js";
@@ -121,7 +124,7 @@ export function useMangrove<
       replaceContents(entityTtls, configuredEntityTtls, config.entityTtls);
       replaceContents(
         cacheResolvers,
-        configuredCacheResolvers,
+        withTypeConditions(newSchema, configuredCacheResolvers),
         config.cacheResolvers,
       );
     },

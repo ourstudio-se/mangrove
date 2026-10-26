@@ -1,7 +1,5 @@
-import {
-  ALIAS_ENTITYCACHE_ID,
-  ALIAS_ENTITYCACHE_TYPENAME,
-} from "./constants.js";
+import { ALIAS_ENTITYCACHE_TYPENAME } from "./constants.js";
+import { isIdMarkerKey, isMarkerKey } from "./markers.js";
 import {
   ASTVisitor,
   DocumentNode,
@@ -24,7 +22,11 @@ import {
   pruneSelectionSet,
   pruneUnusedVariables,
 } from "./utils.js";
-import { EntityTreeNode } from "./typings.js";
+import {
+  CacheResolver,
+  EntityTreeNode,
+  ResolutionExpectations,
+} from "./typings.js";
 
 export interface GetPartialRecacheQueryParameter {
   entityTree: EntityTree;
@@ -38,13 +40,15 @@ export interface PartialRecacheQuery {
   /** Coordinates whose selection sets were narrowed down. */
   prunedCoordinates: string[];
   query: DocumentNode;
+  /** The entities requested by each cache resolution. */
+  resolutions: ResolutionExpectations;
 }
 
 function isMarkerField(selection: SelectionNode): selection is FieldNode {
   return (
     selection.kind === Kind.FIELD &&
-    (selection.alias?.value === ALIAS_ENTITYCACHE_ID ||
-      selection.alias?.value === ALIAS_ENTITYCACHE_TYPENAME)
+    selection.alias !== undefined &&
+    isMarkerKey(selection.alias.value)
   );
 }
 
@@ -78,7 +82,7 @@ function linkSelectionsOf(selectionSet: SelectionSetNode): SelectionNode[] {
 function hasIdMarker(selections: readonly SelectionNode[]): boolean {
   return selections.some((selection) =>
     selection.kind === Kind.FIELD
-      ? selection.alias?.value === ALIAS_ENTITYCACHE_ID
+      ? selection.alias !== undefined && isIdMarkerKey(selection.alias.value)
       : selection.kind === Kind.INLINE_FRAGMENT &&
         hasIdMarker(selection.selectionSet.selections),
   );
@@ -107,20 +111,26 @@ export function convertFieldNodeToLink(field: FieldNode): FieldNode | null {
 }
 
 /**
- * Narrows a selection set down to what applies to `typename`, dropping inline
- * fragments on other entity types known at this position.
+ * Narrows a selection set down to what applies to `resolver`'s type
+ * (`typename`), dropping inline fragments that can't apply to it. If the
+ * resolver knows its type conditions (resolvers configured from a schema do),
+ * only fragments on those are kept; otherwise fragments on other known entity
+ * types are dropped.
  */
 export function selectionSetForType(
   selectionSet: SelectionSetNode,
   typename: string,
+  resolver: CacheResolver,
   otherTypenames: Iterable<string>,
 ): SelectionSetNode {
-  const others = new Set(otherTypenames);
-  others.delete(typename);
-
-  if (others.size === 0) {
-    return selectionSet;
-  }
+  const applies: (condition: string) => boolean = resolver.typeConditions
+    ? (condition) =>
+        condition === typename || resolver.typeConditions!.includes(condition)
+    : (() => {
+        const others = new Set(otherTypenames);
+        others.delete(typename);
+        return (condition: string) => !others.has(condition);
+      })();
 
   return {
     ...selectionSet,
@@ -128,7 +138,7 @@ export function selectionSetForType(
       (selection) =>
         selection.kind !== Kind.INLINE_FRAGMENT ||
         !selection.typeCondition ||
-        !others.has(selection.typeCondition.name.value),
+        applies(selection.typeCondition.name.value),
     ),
   };
 }
@@ -265,12 +275,14 @@ export function getPartialRecacheQuery({
             const selectionSet = selectionSetForType(
               field.selectionSet,
               typename,
+              resolver,
               [...node.typenames, ...entityTree.resolverTypenames],
             );
 
             cacheResolutions.push(
               ...mapCacheResolutions(
                 resolver,
+                typename,
                 ids,
                 coordinates,
                 selectionSet,
@@ -315,5 +327,10 @@ export function getPartialRecacheQuery({
     kind: Kind.DOCUMENT,
   };
 
-  return { linkSelections, prunedCoordinates, query };
+  return {
+    linkSelections,
+    prunedCoordinates,
+    query,
+    resolutions: aliases.expectations,
+  };
 }

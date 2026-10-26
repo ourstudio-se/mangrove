@@ -6,6 +6,7 @@ import {
   CachedExecutionResult,
   MakeQueryRunnerParameter,
   PartialExecutionOpts,
+  ResolutionExpectations,
   RunQuery,
   RunQueryArgs,
 } from "./typings.js";
@@ -99,6 +100,8 @@ function getArgsFromExecutorRequest(request: ExecutionRequest): RunQueryArgs {
 
 export interface LayeredCacheExecuteParameter {
   linkSelections: Record<string, SelectionSetNode>;
+  /** The entities requested by the cache resolutions of `partialQuery`. */
+  resolutions?: ResolutionExpectations;
   originalOperationName?: string;
   partialQuery?: DocumentNode;
   resolvers: CacheResolverMap;
@@ -121,25 +124,31 @@ export async function layeredCacheExecute({
   snapshots = new EntitySnapshots(),
   originalOperationName,
   partialQuery,
+  resolutions,
   variableDefinitions = [],
 }: LayeredCacheExecuteParameter): Promise<{
   linkQueries: DocumentNode[];
+  resolutions: (ResolutionExpectations | undefined)[];
   result: ExecutionResult[];
 }> {
   if (!partialQuery) {
-    return { linkQueries: [], result: [] };
+    return { linkQueries: [], resolutions: [], result: [] };
   }
 
   let nextResult = await runQuery(partialQuery, originalOperationName);
 
   const nextResults = [nextResult];
+  const allResolutions = [resolutions];
   const linkQueries: DocumentNode[] = [];
 
   if (!nextResult.data || nextResult.errors?.length) {
-    return { linkQueries, result: nextResults };
+    return { linkQueries, resolutions: allResolutions, result: nextResults };
   }
 
-  const collectLinks = makeLinkCollector(snapshots);
+  const collectLinks = makeLinkCollector(
+    snapshots,
+    new Set(Object.keys(linkSelections)),
+  );
 
   for (let round = 0; ; round++) {
     const links = collectLinks(nextResult.data);
@@ -172,13 +181,14 @@ export async function layeredCacheExecute({
 
     linkQueries.push(linkQuery);
     nextResults.push(nextResult);
+    allResolutions.push(linkQueryResult.resolutions);
 
     if (!nextResult.data || nextResult.errors?.length) {
       break;
     }
   }
 
-  return { linkQueries, result: nextResults };
+  return { linkQueries, resolutions: allResolutions, result: nextResults };
 }
 
 function stripMarkers(result: ExecutionResult): ExecutionResult {
@@ -248,6 +258,7 @@ export function makeQueryRunner({
     const mergeContext = createMergeContext(
       cachedResult?.data,
       partialExecutionOpts.prunedCoordinates,
+      Object.keys(linkSelections),
     );
 
     let linkQueries: DocumentNode[] = [];
@@ -259,6 +270,7 @@ export function makeQueryRunner({
         linkSelections,
         originalOperationName: operationName ?? operation.name?.value,
         partialQuery: query,
+        resolutions: partialExecutionOpts.resolutions,
         resolvers: cacheResolvers,
         runQuery: runner,
         snapshots: mergeContext.snapshots,
@@ -282,6 +294,7 @@ export function makeQueryRunner({
         cachedResult,
         mergeContext,
         nextResults: layered.result,
+        resolutions: layered.resolutions,
         originalDocument: args.document,
       });
     } catch (err) {

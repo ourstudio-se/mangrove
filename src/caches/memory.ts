@@ -15,6 +15,13 @@ export interface CreateMemoryCacheOpts {
   invalidationWindow?: number;
   /** Clock, for tests. */
   now?: () => number;
+  /** Expired entries are swept after this many writes. */
+  sweepInterval?: number;
+}
+
+export interface MemoryCache extends Cache {
+  /** Number of stored entries, including expired ones not yet swept. */
+  readonly size: number;
 }
 
 interface Expiring<T> {
@@ -29,7 +36,8 @@ interface Expiring<T> {
 export function createMemoryCache({
   invalidationWindow = 10 * 60 * 1000,
   now = Date.now,
-}: CreateMemoryCacheOpts = {}): Cache {
+  sweepInterval = 1000,
+}: CreateMemoryCacheOpts = {}): MemoryCache {
   const values = new Map<string, Expiring<string>>();
   const sets = new Map<string, Expiring<Map<string, number>>>();
   const markers = new Map<string, Expiring<number>>();
@@ -66,6 +74,30 @@ export function createMemoryCache({
     return members;
   }
 
+  // Entries expire lazily when read; sweep regularly so that entries that
+  // are never read again don't accumulate.
+  let writes = 0;
+
+  function sweep() {
+    for (const map of [values, markers, claims] as Map<
+      string,
+      Expiring<unknown>
+    >[]) {
+      for (const key of Array.from(map.keys())) {
+        live(map, key);
+      }
+    }
+    for (const key of Array.from(sets.keys())) {
+      liveMembers(key);
+    }
+  }
+
+  function countWrite() {
+    if (++writes % sweepInterval === 0) {
+      sweep();
+    }
+  }
+
   function deleteKey(key: string) {
     values.delete(key);
     sets.delete(key);
@@ -77,6 +109,7 @@ export function createMemoryCache({
       membersWithTtls,
       options: AddMembersOptions = {},
     ) {
+      countWrite();
       const { guard, onlyNew = false } = options;
 
       if (guard) {
@@ -136,6 +169,7 @@ export function createMemoryCache({
       if (!(ttl > 0)) {
         throw new CacheValidationError(`TTL must be positive, got ${ttl}`);
       }
+      countWrite();
       values.set(key, { expiresAt: now() + ttl, value: data });
     },
   };
@@ -191,6 +225,9 @@ export function createMemoryCache({
     },
     async getSetMembers(key) {
       return Array.from(liveMembers(key)?.keys() ?? []);
+    },
+    get size() {
+      return values.size + sets.size + markers.size + claims.size;
     },
     async invalidate({
       keys,

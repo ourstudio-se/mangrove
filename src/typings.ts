@@ -2,6 +2,7 @@ import {
   ALIAS_ENTITYCACHE_ID,
   ALIAS_ENTITYCACHE_TYPENAME,
 } from "./constants.js";
+import { getMarkedId, getMarkedTypename } from "./markers.js";
 import { isArray, isObject } from "./utils.js";
 import type {
   DocumentNode,
@@ -89,6 +90,8 @@ export interface PartialExecutionOpts {
   linkSelections: Record<string, SelectionSetNode>;
   /** Coordinates whose selection sets were narrowed in `query`. */
   prunedCoordinates?: readonly string[];
+  /** The entities requested by each cache resolution in `query`. */
+  resolutions?: ResolutionExpectations;
   /**
    * The document to execute. `undefined` together with a `result` means that
    * the cached result can be served as-is.
@@ -210,6 +213,12 @@ export interface CacheResolver {
   idArg: string;
   rootField: string;
   type: "string" | "int" | "float";
+  /**
+   * Type conditions that apply to the resolved type: its interfaces and the
+   * unions it belongs to. Fragments on anything else are left out of
+   * resolutions. Filled in from the schema where available.
+   */
+  typeConditions?: string[];
 }
 
 export type CacheResolverMap = Record<string, CacheResolver>;
@@ -221,6 +230,8 @@ export interface EntityTreeNode {
   isDirty: boolean;
   isEntity: boolean;
   isInvalidated: boolean;
+  /** Objects that aren't identifiable entities were seen at this node. */
+  hasOpaqueObjects: boolean;
   isList: boolean;
   /** On the path from the root to an invalidated entity. */
   isRequired: boolean;
@@ -245,10 +256,8 @@ export function isCacheResolvedEntity(
 ): value is CacheResolvedEntity {
   return (
     isObject(value) &&
-    ALIAS_ENTITYCACHE_ID in value &&
-    ALIAS_ENTITYCACHE_TYPENAME in value &&
-    value[ALIAS_ENTITYCACHE_ID] !== null &&
-    value[ALIAS_ENTITYCACHE_ID] !== undefined
+    getMarkedTypename(value) !== undefined &&
+    getMarkedId(value) !== undefined
   );
 }
 
@@ -299,6 +308,8 @@ export interface ResultProcessorParameter {
   cachedResult?: ExecutionResult;
   /** Merge state for `cachedResult`; created from it if omitted. */
   mergeContext?: MergeContext;
+  /** For each of `nextResults`, the entities its cache resolutions requested. */
+  resolutions?: readonly (ResolutionExpectations | undefined)[];
   nextResults: ExecutionResult[];
   originalDocument: DocumentNode;
 }
@@ -422,6 +433,12 @@ export interface RunQueryArgs {
 }
 
 export type SerializedKnownEntitiesMap = Record<string, string[]>;
+
+/** The entities each cache resolution alias requested, by alias. */
+export type ResolutionExpectations = Record<
+  string,
+  { ids: string[]; typename: string }
+>;
 
 export interface LinkGroup {
   coordinates: string;

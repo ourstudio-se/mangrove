@@ -133,6 +133,7 @@ describe("schema configuration", () => {
       idArg: "id",
       rootField: "a",
       type: "string",
+      typeConditions: [],
     });
     expect(config.cacheResolvers.B?.type).toBe("float");
     expect(config.cacheResolvers.C).toBeUndefined();
@@ -141,6 +142,7 @@ describe("schema configuration", () => {
       idArg: "ids",
       rootField: "d",
       type: "int",
+      typeConditions: [],
     });
     expect(logger.warnings).toHaveLength(1);
   });

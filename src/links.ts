@@ -4,7 +4,12 @@ import {
   getEntityIdentity,
   isLinkStub,
 } from "./merge.js";
-import { CacheResolverMap, LinkGroup, ObjMap } from "./typings.js";
+import {
+  CacheResolverMap,
+  LinkGroup,
+  ObjMap,
+  ResolutionExpectations,
+} from "./typings.js";
 import {
   DocumentNode,
   FieldNode,
@@ -13,11 +18,8 @@ import {
   SelectionSetNode,
   VariableDefinitionNode,
 } from "graphql";
-import {
-  ALIAS_ENTITYCACHE_ID,
-  ALIAS_ENTITYCACHE_TYPENAME,
-  CoordinateRoot,
-} from "./constants.js";
+import { CoordinateRoot } from "./constants.js";
+import { getMarkedId, getMarkedTypename } from "./markers.js";
 import {
   ResolutionAliases,
   mapCacheResolutions,
@@ -33,7 +35,10 @@ export { convertFieldNodeToLink } from "./getPartialRecacheQuery.js";
  * point to entities we have no data for at that position. Each entity is only
  * ever returned once per collector.
  */
-export function makeLinkCollector(snapshots: EntitySnapshots) {
+export function makeLinkCollector(
+  snapshots: EntitySnapshots,
+  linkCoordinates: ReadonlySet<string>,
+) {
   const requested = new Set<string>();
 
   return function collectLinks(
@@ -53,7 +58,7 @@ export function makeLinkCollector(snapshots: EntitySnapshots) {
         return;
       }
 
-      if (isLinkStub(value)) {
+      if (linkCoordinates.has(coordinates) && isLinkStub(value)) {
         const identity = getEntityIdentity(value)!;
         const key = `${coordinates}\u0000${identity}`;
 
@@ -63,8 +68,8 @@ export function makeLinkCollector(snapshots: EntitySnapshots) {
 
         requested.add(key);
 
-        const typename = value[ALIAS_ENTITYCACHE_TYPENAME] as string;
-        const id = String(value[ALIAS_ENTITYCACHE_ID]);
+        const typename = getMarkedTypename(value)!;
+        const id = getMarkedId(value)!;
         const groupKey = `${coordinates}\u0000${typename}`;
 
         let group = groups.get(groupKey);
@@ -114,6 +119,7 @@ export function buildLinkQuery({
 }: BuildLinkQueryParameter): {
   document: DocumentNode;
   operationName: string;
+  resolutions: ResolutionExpectations;
 } | null {
   const aliases = new ResolutionAliases();
   const cacheResolutions: FieldNode[] = [];
@@ -139,9 +145,15 @@ export function buildLinkQuery({
     cacheResolutions.push(
       ...mapCacheResolutions(
         resolver,
+        link.typename,
         link.ids,
         link.coordinates,
-        selectionSetForType(selectionSet, link.typename, resolverTypenames),
+        selectionSetForType(
+          selectionSet,
+          link.typename,
+          resolver,
+          resolverTypenames,
+        ),
         aliases,
       ),
     );
@@ -166,5 +178,6 @@ export function buildLinkQuery({
   return {
     document: { definitions: [operation], kind: Kind.DOCUMENT },
     operationName,
+    resolutions: aliases.expectations,
   };
 }

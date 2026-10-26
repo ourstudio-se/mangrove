@@ -1,8 +1,5 @@
-import {
-  ALIAS_ENTITYCACHE_ID,
-  ALIAS_ENTITYCACHE_TYPENAME,
-  CoordinateRoot,
-} from "./constants.js";
+import { ALIAS_ENTITYCACHE_ID, CoordinateRoot } from "./constants.js";
+import { getMarkedId, getMarkedTypename, isMarkerKey } from "./markers.js";
 import {
   CollectEntityWithLocationFunction,
   EntityWithLocation,
@@ -34,10 +31,13 @@ export function pruneSelectionSet(
 ): SelectionSetNode {
   const selections = selectionSet.selections.filter((selection) => {
     switch (selection.kind) {
-      case Kind.FIELD:
-        return keepSelections.includes(
-          selection.alias?.value ?? selection.name.value,
+      case Kind.FIELD: {
+        const key = selection.alias?.value ?? selection.name.value;
+        return (
+          keepSelections.includes(key) ||
+          (isMarkerKey(key) && keepSelections.includes(ALIAS_ENTITYCACHE_ID))
         );
+      }
       default:
         return true;
     }
@@ -187,7 +187,7 @@ export function cleanupData<T>(data: T): T {
   if (isObject(data)) {
     const copy: ObjMap<unknown> = {};
     for (const key of Object.keys(data)) {
-      if (key === ALIAS_ENTITYCACHE_ID || key === ALIAS_ENTITYCACHE_TYPENAME) {
+      if (isMarkerKey(key)) {
         continue;
       }
       copy[key] = cleanupData(data[key]);
@@ -429,7 +429,7 @@ export function collectEntityRecords(
     }
 
     for (const key of Object.keys(value)) {
-      if (key === ALIAS_ENTITYCACHE_ID || key === ALIAS_ENTITYCACHE_TYPENAME) {
+      if (isMarkerKey(key)) {
         continue;
       }
       walk(value[key], [...basePath, { field: key }]);
@@ -439,6 +439,43 @@ export function collectEntityRecords(
   walk(data, path);
 
   return records;
+}
+
+/**
+ * Coordinates at which `data` holds objects that aren't identifiable
+ * entities (the root object aside). Such positions can't be reached through
+ * links.
+ */
+export function collectOpaqueCoordinates(data: unknown): string[] {
+  const found = new Set<string>();
+
+  function walk(value: unknown, coordinates: string, isRoot: boolean) {
+    if (isArray(value)) {
+      for (const item of value) {
+        walk(item, coordinates, false);
+      }
+      return;
+    }
+    if (!isObject(value)) {
+      return;
+    }
+    if (
+      !isRoot &&
+      (getMarkedTypename(value) === undefined ||
+        getMarkedId(value) === undefined)
+    ) {
+      found.add(coordinates);
+    }
+    for (const key of Object.keys(value)) {
+      if (!isMarkerKey(key)) {
+        walk(value[key], `${coordinates}.${key}`, false);
+      }
+    }
+  }
+
+  walk(data, CoordinateRoot.query, true);
+
+  return Array.from(found);
 }
 
 export function getKnownEntities(

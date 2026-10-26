@@ -483,7 +483,9 @@ const cache = createRedisCache({
 
 `createMemoryCache()` has the same semantics, in process memory. It's useful for tests and single process deployments.
 
-The Redis cache uses Lua scripts that touch several keys at once, so it doesn't support Redis Cluster.
+The Redis cache uses Lua scripts that touch several keys at once, so it doesn't support Redis Cluster. Expiry times are computed from the application servers' clocks, so keep them in sync with each other.
+
+Internal keys start with `:` (after the `keyPrefix`), which no GraphQL type name can start with, so they never collide with entity keys such as `Item:1`.
 
 ### Invalidation
 
@@ -505,13 +507,22 @@ Mangrove assumes that every change is announced by invalidating the entity whose
 - **Invalidations during a request.** Every invalidation bumps an epoch. A request reads the epoch before it reads anything else, and when it stores its result it doesn't mark any entity as valid that has been invalidated since. The next request refetches it.
 - **Concurrent requests.** A request never overwrites a result stored by a request that started after it.
 - **Expiry.** A result keeps the expiry it was first stored with, even when parts of it are refreshed, so `ttl` bounds how old any part of a result can be. Cache hits never write to the cache.
-- **When in doubt, execute.** If a partial execution returns errors, a cache resolver doesn't return an entity, a link can't be resolved, or the cached data turns out to be inconsistent with the fresh data, Mangrove executes the original query instead. Errors are therefore always reported against the client's query.
+- **When in doubt, execute.** If a partial execution returns errors, a cache resolver doesn't return every entity it was asked for, a link can't be resolved, or the cached data turns out to be inconsistent with the fresh data, Mangrove executes the original query instead. Errors are therefore always reported against the client's query.
+- **Entity TTLs.** Refreshing part of a result never extends how long the entities that weren't refetched are considered valid.
 
 ### Caveats
 
 - **Cache resolvers bypass parent resolvers.** An entity reached through a cache resolver (e.g. `item(id:)`) is fetched without going through the path in the original query. Any authorization or filtering done by parent resolvers on that path is skipped; make sure cache resolvers apply the same rules.
 - **Only queries are cached.** Mutations and subscriptions are executed as usual. Documents that contain a mutation or subscription are not decorated at all.
 - **Sessions.** Anything that changes the result of a query besides its document and variables (the user, their roles, the locale, ...) must be part of the session id.
+
+## Upgrading from 0.1
+
+- The storage format changed: start with an empty cache (or a new `keyPrefix`).
+- The eager invalidation strategy was removed; use `lazyInvalidationStrategy`.
+- Custom `Cache` implementations need `getEpoch`, `invalidate`, `isSetMember` and conditional pipes (`getPipe(condition)`); `getKeysStartingWith` is no longer used. See `createMemoryCache` for a reference implementation.
+- `makeResultProcessor` no longer caches results with errors by default.
+- Cache resolver aliases changed format (`_ENTITY_dashboard__latestUpdates_i0`).
 
 ## Development
 

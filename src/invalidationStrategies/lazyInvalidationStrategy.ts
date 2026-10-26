@@ -10,14 +10,17 @@ import {
 import {
   defaultBuildEntityKey,
   defaultBuildLazyOperationKey,
+  defaultBuildResultKey,
   defaultBuildTypeIndexKey,
 } from "../defaults.js";
 import { buildEntityTree } from "../tree.js";
+import { collectOpaqueCoordinates } from "../utils.js";
 import { getPartialRecacheQuery } from "../getPartialRecacheQuery.js";
 
 export interface LazyInvalidationStrategyOpts {
   buildEntityKey?: (entity: EntityRecord) => string;
   buildOperationKey?: (cacheKey: string) => string;
+  buildResultKey?: (cacheKey: string) => string;
   buildTypeIndexKey?: (typename: string) => string;
   cache: Cache;
   logger?: Logger;
@@ -29,10 +32,17 @@ interface LazyCacheState {
   epoch: number;
   /** Expiry of the cached result this request started from. */
   expiresAt?: number;
+  /**
+   * Entities that were valid when the cached result was read, and whose data
+   * therefore wasn't refetched.
+   */
+  validEntityKeys?: string[];
 }
 
 interface StoredEnvelope {
   expiresAt: number;
+  /** Coordinates holding objects that aren't identifiable entities. */
+  opaque: string[];
   result: CachedExecutionResult;
   v: 2;
 }
@@ -57,6 +67,7 @@ function parseEnvelope(serialized: string): StoredEnvelope | null {
   if (
     parsed?.v !== 2 ||
     typeof parsed.expiresAt !== "number" ||
+    !Array.isArray(parsed.opaque) ||
     typeof parsed.result !== "object"
   ) {
     return null;
@@ -103,6 +114,7 @@ function parseReference(serialized: string): EntityCacheResult {
 export const lazyInvalidationStrategy = ({
   buildEntityKey = defaultBuildEntityKey,
   buildOperationKey = defaultBuildLazyOperationKey,
+  buildResultKey = defaultBuildResultKey,
   buildTypeIndexKey = defaultBuildTypeIndexKey,
   cache,
   logger = console,
@@ -117,7 +129,7 @@ export const lazyInvalidationStrategy = ({
       // The epoch must be read before anything else, so that invalidations
       // that happen while this request runs are detected when storing.
       const epochPromise = cache.getEpoch();
-      const serializedPromise = cache.get(cacheKey);
+      const serializedPromise = cache.get(buildResultKey(cacheKey));
       const epoch = await epochPromise;
       const serialized = await serializedPromise;
 
@@ -181,13 +193,14 @@ export const lazyInvalidationStrategy = ({
       const cacheState: LazyCacheState = {
         epoch,
         expiresAt: envelope.expiresAt,
+        validEntityKeys: entityKeys.filter((key) => validity.get(key)),
       };
 
       let partial: ReturnType<typeof getPartialRecacheQuery>;
 
       try {
         partial = getPartialRecacheQuery({
-          entityTree: buildEntityTree(references, resolvers),
+          entityTree: buildEntityTree(references, resolvers, envelope.opaque),
           operationName,
           originalDocument,
         });
@@ -204,6 +217,7 @@ export const lazyInvalidationStrategy = ({
         linkSelections: partial?.linkSelections ?? {},
         prunedCoordinates: partial?.prunedCoordinates,
         query: partial?.query,
+        resolutions: partial?.resolutions,
         result: envelope.result,
       };
     },
@@ -264,6 +278,7 @@ export const lazyInvalidationStrategy = ({
 
       const envelope: StoredEnvelope = {
         expiresAt,
+        opaque: collectOpaqueCoordinates(executionResult.data),
         result: executionResult,
         v: 2,
       };
@@ -292,6 +307,12 @@ export const lazyInvalidationStrategy = ({
       const operationKey = buildOperationKey(cacheKey);
 
       // Never overwrite a result stored by a request that started later.
+      // Data of entities that were still valid in the cached result was taken
+      // from the cache, not refetched: it must not be marked valid again.
+      const notRefetched = new Set(
+        mergedIntoCachedResult ? cacheState.validEntityKeys ?? [] : [],
+      );
+
       const pipe = cache.getPipe({
         epoch: cacheState.epoch,
         key: `${operationKey}:epoch`,
@@ -305,15 +326,18 @@ export const lazyInvalidationStrategy = ({
 
         const typeKey = buildEntityKey({ typename: entity.typename });
 
-        await pipe.addMembersToSet(entityKey, [[cacheKey, memberTtl]], {
-          guard: {
-            epoch: cacheState.epoch,
-            markers: entityKey === typeKey ? [entityKey] : [entityKey, typeKey],
-          },
-          // Never extend how long an entity is considered valid for this
-          // operation; only refetched (and thus absent) entities get added.
-          onlyNew: true,
-        });
+        if (!notRefetched.has(entityKey)) {
+          await pipe.addMembersToSet(entityKey, [[cacheKey, memberTtl]], {
+            guard: {
+              epoch: cacheState.epoch,
+              markers:
+                entityKey === typeKey ? [entityKey] : [entityKey, typeKey],
+            },
+            // Never extend how long an entity is considered valid for this
+            // operation; only refetched (and thus absent) entities get added.
+            onlyNew: true,
+          });
+        }
 
         if (entity.id !== undefined) {
           await pipe.addMembersToSet(buildTypeIndexKey(entity.typename), [
@@ -327,7 +351,11 @@ export const lazyInvalidationStrategy = ({
         operationKey,
         Array.from(references, (reference) => [reference, remaining]),
       );
-      await pipe.set(cacheKey, JSON.stringify(envelope), remaining);
+      await pipe.set(
+        buildResultKey(cacheKey),
+        JSON.stringify(envelope),
+        remaining,
+      );
 
       await pipe.execute();
     },

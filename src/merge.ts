@@ -1,9 +1,6 @@
-import {
-  ALIAS_ENTITYCACHE_ID,
-  ALIAS_ENTITYCACHE_TYPENAME,
-  CoordinateRoot,
-} from "./constants.js";
-import { ObjMap } from "./typings.js";
+import { CoordinateRoot } from "./constants.js";
+import { getMarkedId, getMarkedTypename, isMarkerKey } from "./markers.js";
+import { ObjMap, ResolutionExpectations } from "./typings.js";
 import { cloneData, isArray, isObject } from "./utils.js";
 import { isCacheAliasName, parseCacheResolverAlias } from "./alias.js";
 
@@ -18,15 +15,12 @@ export function getEntityIdentity(value: unknown): string | undefined {
   if (!isObject(value)) {
     return undefined;
   }
-  const typename = value[ALIAS_ENTITYCACHE_TYPENAME];
-  const id = value[ALIAS_ENTITYCACHE_ID];
-  if (typeof typename !== "string") {
+  const typename = getMarkedTypename(value);
+  const id = getMarkedId(value);
+  if (typename === undefined || id === undefined) {
     return undefined;
   }
-  if (typeof id !== "string" && typeof id !== "number") {
-    return undefined;
-  }
-  return JSON.stringify([typename, String(id)]);
+  return JSON.stringify([typename, id]);
 }
 
 /** An object that only identifies an entity, left behind by a link. */
@@ -35,7 +29,7 @@ export function isLinkStub(value: unknown): value is ObjMap<unknown> {
     return false;
   }
   for (const key of Object.keys(value)) {
-    if (key !== ALIAS_ENTITYCACHE_ID && key !== ALIAS_ENTITYCACHE_TYPENAME) {
+    if (!isMarkerKey(key)) {
       return false;
     }
   }
@@ -94,12 +88,9 @@ export class EntitySnapshots {
 
     const identity = getEntityIdentity(data);
 
-    // Stubs carry no data, so they can't stand in for anything.
-    if (
-      identity !== undefined &&
-      !isLinkStub(data) &&
-      !this.has(coordinates, identity)
-    ) {
+    // Cached results never contain unresolved links, so even entities
+    // without any selected fields are genuine data.
+    if (identity !== undefined && !this.has(coordinates, identity)) {
       this.set(coordinates, identity, data as ObjMap<unknown>);
     }
 
@@ -141,6 +132,8 @@ export class FreshEntities {
 
 export interface MergeContext {
   fresh: FreshEntities;
+  /** Coordinates at which the generated queries select links. */
+  linkCoordinates: ReadonlySet<string>;
   /** Coordinates whose selection sets were narrowed in the partial query. */
   prunedCoordinates: ReadonlySet<string>;
   snapshots: EntitySnapshots;
@@ -149,9 +142,11 @@ export interface MergeContext {
 export function createMergeContext(
   cachedData: unknown,
   prunedCoordinates: Iterable<string> = [],
+  linkCoordinates: Iterable<string> = [],
 ): MergeContext {
   return {
     fresh: new FreshEntities(),
+    linkCoordinates: new Set(linkCoordinates),
     prunedCoordinates: new Set(prunedCoordinates),
     snapshots: new EntitySnapshots(cachedData),
   };
@@ -248,9 +243,9 @@ function sameShape(target: ObjMap<unknown>, source: ObjMap<unknown>) {
   if (sourceIdentity !== undefined) {
     return getEntityIdentity(target) === sourceIdentity;
   }
-  const sourceType = source[ALIAS_ENTITYCACHE_TYPENAME];
-  const targetType = target[ALIAS_ENTITYCACHE_TYPENAME];
-  if (typeof sourceType === "string" && typeof targetType === "string") {
+  const sourceType = getMarkedTypename(source);
+  const targetType = getMarkedTypename(target);
+  if (sourceType !== undefined && targetType !== undefined) {
     return sourceType === targetType;
   }
   return true;
@@ -308,6 +303,18 @@ export function mergeData(
   }
 
   if (isObject(source)) {
+    if (
+      context.linkCoordinates.has(coordinates) &&
+      getEntityIdentity(source) === undefined &&
+      Object.keys(source).every(isMarkerKey)
+    ) {
+      // A link to something that isn't an identifiable entity: its data was
+      // stripped from the query and can't be fetched through a link.
+      throw new CacheMergeError(
+        `Object at ${coordinates} can't be resolved through a link`,
+      );
+    }
+
     let base: ObjMap<unknown> | undefined =
       isObject(target) &&
       sameShape(target as ObjMap<unknown>, source as ObjMap<unknown>)
@@ -369,6 +376,7 @@ export function mergeResolvedEntities(
   coordinates: string,
   resolved: unknown,
   context: MergeContext,
+  expected?: { ids: string[]; typename: string },
 ) {
   const fetched = new Map<string, ObjMap<unknown>>();
 
@@ -383,6 +391,14 @@ export function mergeResolvedEntities(
     }
     fetched.set(identity, entity as ObjMap<unknown>);
     recordFresh(entity, coordinates, context);
+  }
+
+  for (const id of expected?.ids ?? []) {
+    if (!fetched.has(JSON.stringify([expected!.typename, id]))) {
+      throw new CacheMergeError(
+        `Cache resolver at ${coordinates} did not return ${expected!.typename}:${id}`,
+      );
+    }
   }
 
   const [root, ...fields] = coordinates.split(".");
@@ -430,13 +446,14 @@ export function mergeExecutionData(
   data: ObjMap<unknown>,
   nextData: ObjMap<unknown>,
   context: MergeContext,
+  expectations?: ResolutionExpectations,
 ): ObjMap<unknown> {
   const plain: ObjMap<unknown> = {};
-  const resolutions: [string, unknown][] = [];
+  const resolutions: [string, unknown, string][] = [];
 
   for (const key of Object.keys(nextData)) {
     if (isCacheAliasName(key)) {
-      resolutions.push([parseCacheResolverAlias(key), nextData[key]]);
+      resolutions.push([parseCacheResolverAlias(key), nextData[key], key]);
     } else {
       plain[key] = nextData[key];
     }
@@ -449,31 +466,15 @@ export function mergeExecutionData(
     context,
   ) as ObjMap<unknown>;
 
-  for (const [coordinates, value] of resolutions) {
-    mergeResolvedEntities(merged, coordinates, value, context);
+  for (const [coordinates, value, alias] of resolutions) {
+    mergeResolvedEntities(
+      merged,
+      coordinates,
+      value,
+      context,
+      expectations?.[alias],
+    );
   }
 
   return merged;
-}
-
-/** Throws if any link stub was left unresolved in `data`. */
-export function assertNoLinkStubs(
-  data: unknown,
-  coordinates = CoordinateRoot.query,
-) {
-  if (isArray(data)) {
-    for (const item of data) {
-      assertNoLinkStubs(item, coordinates);
-    }
-    return;
-  }
-  if (!isObject(data)) {
-    return;
-  }
-  if (isLinkStub(data)) {
-    throw new CacheMergeError(`Unresolved link at ${coordinates}`);
-  }
-  for (const key of Object.keys(data)) {
-    assertNoLinkStubs(data[key], `${coordinates}.${key}`);
-  }
 }

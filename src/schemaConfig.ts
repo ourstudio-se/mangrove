@@ -19,11 +19,14 @@ import {
   GraphQLString,
   GraphQLType,
   getNamedType,
+  getNullableType,
   isAbstractType,
+  isLeafType,
   isInterfaceType,
   isListType,
   isNonNullType,
   isObjectType,
+  isUnionType,
 } from "graphql";
 import { getDirective } from "@graphql-tools/utils";
 import { getParserFromSchema } from "./parser.js";
@@ -156,6 +159,34 @@ function cacheResolversFromQueryRootField(
   return skip("the field must return an object, interface or union type");
 }
 
+/**
+ * Adds the type conditions that apply to each resolver's type (its
+ * interfaces and the unions it is a member of), leaving resolvers that
+ * already declare them alone.
+ */
+export function withTypeConditions(
+  schema: GraphQLSchema,
+  resolvers: CacheResolverMap,
+): CacheResolverMap {
+  const unions = Object.values(schema.getTypeMap()).filter(isUnionType);
+
+  return Object.fromEntries(
+    Object.entries(resolvers).map(([typename, resolver]) => {
+      const type = schema.getType(typename);
+      if (resolver.typeConditions || !isObjectType(type)) {
+        return [typename, resolver];
+      }
+      const typeConditions = [
+        ...type.getInterfaces().map((iface) => iface.name),
+        ...unions
+          .filter((union) => union.getTypes().includes(type))
+          .map((union) => union.name),
+      ];
+      return [typename, { ...resolver, typeConditions }];
+    }),
+  );
+}
+
 export function makeBySchemaConfigGenerator({
   idFields,
   logger = console,
@@ -191,7 +222,15 @@ export function makeBySchemaConfigGenerator({
       const fieldMap = type.getFields();
 
       for (const idField of idFields) {
-        if (idField in fieldMap) {
+        const field = fieldMap[idField];
+        // Ids must be plain scalars that can be selected without arguments.
+        if (
+          field &&
+          isLeafType(getNullableType(field.type)) &&
+          field.args.every(
+            (arg) => !isNonNullType(arg.type) || arg.defaultValue !== undefined,
+          )
+        ) {
           idFieldByTypeName.set(typename, idField);
           break;
         }
@@ -218,7 +257,10 @@ export function makeBySchemaConfigGenerator({
 
     return {
       // Resolvers declared for a concrete type take precedence.
-      cacheResolvers: { ...abstractResolvers, ...objectResolvers },
+      cacheResolvers: withTypeConditions(schema, {
+        ...abstractResolvers,
+        ...objectResolvers,
+      }),
       entityTtls,
       idFieldByTypeName,
       parser: getParserFromSchema(schema, idFieldByTypeName),

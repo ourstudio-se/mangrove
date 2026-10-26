@@ -5,19 +5,18 @@ import {
   ResultProcessor,
 } from "./typings.js";
 import { ExecutionResult, GraphQLError } from "graphql";
-import {
-  assertNoLinkStubs,
-  createMergeContext,
-  mergeExecutionData,
-} from "./merge.js";
+import { createMergeContext, mergeExecutionData } from "./merge.js";
 import { cleanupData, cloneData, collectEntityRecords } from "./utils.js";
-import { defaultCollectEntityWithLocation } from "./defaults.js";
+import {
+  defaultCollectEntityWithLocation,
+  defaultShouldCacheResult,
+} from "./defaults.js";
 
 export function makeResultProcessor({
   entityTtls = {},
   collectEntityWithLocation = defaultCollectEntityWithLocation,
   storeExecutionResult,
-  shouldCacheResult = () => true,
+  shouldCacheResult = defaultShouldCacheResult,
   ttl,
   logger = console,
   awaitWriteBeforeResponse = false,
@@ -37,14 +36,21 @@ export function makeResultProcessor({
     let mergedData: ObjMap<unknown> = cloneData(
       (cachedResult?.data as ObjMap<unknown> | null | undefined) ?? {},
     );
-    let mergedErrors: readonly GraphQLError[] = [];
+    // Errors stored with the cached result (if results with errors are
+    // cached at all) still apply to the parts of it that weren't refetched.
+    let mergedErrors: readonly GraphQLError[] = cachedResult?.errors ?? [];
     let extensions: ObjMap<unknown> | undefined;
 
-    for (const nextResult of nextResults) {
+    for (const [index, nextResult] of nextResults.entries()) {
       const nextData = nextResult.data as ObjMap<unknown> | null | undefined;
 
       if (nextData) {
-        mergedData = mergeExecutionData(mergedData, nextData, mergeContext);
+        mergedData = mergeExecutionData(
+          mergedData,
+          nextData,
+          mergeContext,
+          parameter.resolutions?.[index],
+        );
       }
 
       if (nextResult.errors) {
@@ -54,10 +60,6 @@ export function makeResultProcessor({
       if (extensions === undefined) {
         extensions = nextResult.extensions;
       }
-    }
-
-    if (cachedResult !== undefined) {
-      assertNoLinkStubs(mergedData);
     }
 
     const storedResult: ExecutionResult = {

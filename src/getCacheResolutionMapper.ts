@@ -1,5 +1,5 @@
 import { CacheResolutionError, getCacheResolverAlias } from "./alias.js";
-import { CacheResolver } from "./typings.js";
+import { CacheResolver, ResolutionExpectations } from "./typings.js";
 import { FieldNode, Kind, SelectionSetNode, ValueNode } from "graphql";
 
 const INT_PATTERN = /^-?(?:0|[1-9]\d*)$/;
@@ -35,15 +35,21 @@ export function idToValueNode(resolver: CacheResolver, id: string): ValueNode {
  * Hands out aliases that are unique within one generated document.
  */
 export class ResolutionAliases {
+  /** What each alias requested, to verify the response against. */
+  readonly expectations: ResolutionExpectations = {};
+
   private next = 0;
 
-  alias(coordinates: string) {
-    return getCacheResolverAlias(coordinates, this.next++);
+  alias(coordinates: string, typename: string, ids: string[]) {
+    const alias = getCacheResolverAlias(coordinates, this.next++);
+    this.expectations[alias] = { ids, typename };
+    return alias;
   }
 }
 
 export function mapCacheResolutions(
   resolver: CacheResolver,
+  typename: string,
   ids: Iterable<string>,
   coordinates: string,
   selectionSet: SelectionSetNode,
@@ -55,8 +61,11 @@ export function mapCacheResolutions(
     return [];
   }
 
-  const field = (value: ValueNode): FieldNode => ({
-    alias: { kind: Kind.NAME, value: aliases.alias(coordinates) },
+  const field = (value: ValueNode, requested: string[]): FieldNode => ({
+    alias: {
+      kind: Kind.NAME,
+      value: aliases.alias(coordinates, typename, requested),
+    },
     arguments: [
       {
         kind: Kind.ARGUMENT,
@@ -71,12 +80,15 @@ export function mapCacheResolutions(
 
   if (resolver.batch) {
     return [
-      field({
-        kind: Kind.LIST,
-        values: idList.map((id) => idToValueNode(resolver, id)),
-      }),
+      field(
+        {
+          kind: Kind.LIST,
+          values: idList.map((id) => idToValueNode(resolver, id)),
+        },
+        idList,
+      ),
     ];
   }
 
-  return idList.map((id) => field(idToValueNode(resolver, id)));
+  return idList.map((id) => field(idToValueNode(resolver, id), [id]));
 }

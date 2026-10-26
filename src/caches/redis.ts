@@ -64,13 +64,21 @@ return 1
  * KEYS[1]     condition key
  * KEYS[2]     key
  * ARGV[1]     condition epoch, or ""
- * ARGV[2]     "set" or "del"
- * ARGV[3]     value (set)
- * ARGV[4]     TTL in ms (set)
+ * ARGV[2]     "set", "del" or "rem"
+ * ARGV[3]     value (set), or "z"/"s" (rem)
+ * ARGV[4..]   TTL in ms (set), or members (rem)
  */
 const WRITE_SCRIPT = `${CONDITION_CHECK}
 if ARGV[2] == "set" then
   redis.call("SET", KEYS[2], ARGV[3], "PX", ARGV[4])
+elseif ARGV[2] == "rem" then
+  for i = 4, #ARGV do
+    if ARGV[3] == "z" then
+      redis.call("ZREM", KEYS[2], ARGV[i])
+    else
+      redis.call("SREM", KEYS[2], ARGV[i])
+    end
+  end
 else
   redis.call("DEL", KEYS[2])
 end
@@ -271,15 +279,24 @@ export const createRedisCache = ({
 
   const loader = createReadLoader(client);
   const k = (key: string) => `${keyPrefix}${key}`;
-  const epochKey = k("mangrove:epoch");
-  const markerKey = (marker: string) => k(`mangrove:invalidated:${marker}`);
+  // GraphQL type names can't start with ":", so entity keys can't collide
+  // with internal keys.
+  const epochKey = k(":mangrove:epoch");
+  const markerKey = (marker: string) => k(`:mangrove:invalidated:${marker}`);
 
-  function queueMutations(
-    operator: Redis.ChainableCommander,
+  type Operation = (operator: Redis.ChainableCommander) => void;
+
+  /**
+   * Turns mutations into operations on a transaction. Every write is a
+   * script, so that it can be made conditional, and so that a transaction
+   * failing on a missing script applies nothing.
+   */
+  function recordMutations(
+    record: (operation: Operation) => void,
     condition?: StoreCondition,
   ): CacheMutations {
     // Unconditional writes still need a key in the first slot.
-    const conditionKey = k(condition ? condition.key : "mangrove:epoch");
+    const conditionKey = condition ? k(condition.key) : epochKey;
     const conditionEpoch = condition ? condition.epoch : "";
 
     return {
@@ -305,27 +322,34 @@ export const createRedisCache = ({
           return;
         }
 
-        callScript(
-          operator,
-          ADD_MEMBERS_COMMAND,
-          [conditionKey, k(key), ...(guard?.markers ?? []).map(markerKey)],
-          [
-            conditionEpoch,
-            guard ? guard.epoch : "",
-            now,
-            allowDistinctMemberTTLs ? "z" : "s",
-            onlyNew ? "1" : "0",
-            ...pairs,
-          ],
+        const keys = [
+          conditionKey,
+          k(key),
+          ...(guard?.markers ?? []).map(markerKey),
+        ];
+        const args = [
+          conditionEpoch,
+          guard ? guard.epoch : "",
+          now,
+          allowDistinctMemberTTLs ? "z" : "s",
+          onlyNew ? "1" : "0",
+          ...pairs,
+        ];
+
+        record((operator) =>
+          callScript(operator, ADD_MEMBERS_COMMAND, keys, args),
         );
       },
       async clear(keys) {
         for (const key of keys) {
-          callScript(
-            operator,
-            WRITE_COMMAND,
-            [conditionKey, k(key)],
-            [conditionEpoch, "del"],
+          const prefixed = k(key);
+          record((operator) =>
+            callScript(
+              operator,
+              WRITE_COMMAND,
+              [conditionKey, prefixed],
+              [conditionEpoch, "del"],
+            ),
           );
         }
       },
@@ -334,47 +358,59 @@ export const createRedisCache = ({
         if (list.length === 0) {
           return;
         }
-        if (allowDistinctMemberTTLs) {
-          operator.zrem(k(key), ...list);
-        } else {
-          operator.srem(k(key), ...list);
-        }
+        const prefixed = k(key);
+        record((operator) =>
+          callScript(
+            operator,
+            WRITE_COMMAND,
+            [conditionKey, prefixed],
+            [
+              conditionEpoch,
+              "rem",
+              allowDistinctMemberTTLs ? "z" : "s",
+              ...list,
+            ],
+          ),
+        );
       },
       async set(key, data, ttl) {
         if (!(ttl > 0)) {
           throw new CacheValidationError(`TTL must be positive, got ${ttl}`);
         }
         const compressed = await compression(data);
-        callScript(
-          operator,
-          WRITE_COMMAND,
-          [conditionKey, k(key)],
-          [conditionEpoch, "set", compressed, Math.ceil(ttl)],
+        const prefixed = k(key);
+        record((operator) =>
+          callScript(
+            operator,
+            WRITE_COMMAND,
+            [conditionKey, prefixed],
+            [conditionEpoch, "set", compressed, Math.ceil(ttl)],
+          ),
         );
       },
     };
   }
 
-  function createPipe(condition?: StoreCondition): CachePipe {
-    const transaction = client.multi();
+  async function loadScripts() {
+    await Promise.all(
+      Object.values(SCRIPTS).map((lua) => client.script("LOAD", lua)),
+    );
+  }
 
-    if (condition) {
-      if (!(condition.ttl > 0)) {
-        throw new CacheValidationError(
-          `Condition TTL must be positive, got ${condition.ttl}`,
-        );
-      }
-      callScript(
-        transaction,
-        CLAIM_COMMAND,
-        [k(condition.key)],
-        [condition.epoch, Math.ceil(condition.ttl)],
+  function createPipe(condition?: StoreCondition): CachePipe {
+    if (condition && !(condition.ttl > 0)) {
+      throw new CacheValidationError(
+        `Condition TTL must be positive, got ${condition.ttl}`,
       );
     }
 
-    const queued = queueMutations(transaction, condition);
+    const operations: Operation[] = [];
+    const recorded = recordMutations(
+      (operation) => operations.push(operation),
+      condition,
+    );
     // Compression may be asynchronous; make sure every operation has been
-    // queued before the transaction is sent.
+    // recorded before the transaction is sent.
     const pending: Promise<void>[] = [];
 
     const track =
@@ -385,15 +421,41 @@ export const createRedisCache = ({
         return promise;
       };
 
+    function exec() {
+      const transaction = client.multi();
+      if (condition) {
+        callScript(
+          transaction,
+          CLAIM_COMMAND,
+          [k(condition.key)],
+          [condition.epoch, Math.ceil(condition.ttl)],
+        );
+      }
+      for (const operation of operations) {
+        operation(transaction);
+      }
+      return assertPipelineSucceeded(transaction.exec());
+    }
+
     return {
-      addMembersToSet: track(queued.addMembersToSet),
-      clear: track(queued.clear),
+      addMembersToSet: track(recorded.addMembersToSet),
+      clear: track(recorded.clear),
       async execute() {
         await Promise.all(pending);
-        await assertPipelineSucceeded(transaction.exec());
+        try {
+          await exec();
+        } catch (err) {
+          // Scripts can disappear (SCRIPT FLUSH, failover). Nothing was
+          // applied, as every write is a script: load them and retry.
+          if (!(err instanceof Error) || !err.message.includes("NOSCRIPT")) {
+            throw err;
+          }
+          await loadScripts();
+          await exec();
+        }
       },
-      removeMembersFromSet: track(queued.removeMembersFromSet),
-      set: track(queued.set),
+      removeMembersFromSet: track(recorded.removeMembersFromSet),
+      set: track(recorded.set),
     };
   }
 

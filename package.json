@@ -1,6 +1,6 @@
 {
   "name": "mangrove-graphql",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Adaptive tree cache for GraphQL and Javascript",
   "author": "Max Bolotin",
   "license": "MIT",

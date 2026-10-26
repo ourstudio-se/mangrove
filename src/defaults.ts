@@ -1,7 +1,4 @@
-import {
-  ALIAS_ENTITYCACHE_ID,
-  ALIAS_ENTITYCACHE_TYPENAME,
-} from "./constants.js";
+import { getMarkedId, getMarkedTypename } from "./markers.js";
 import {
   EntityRecord,
   EntityWithLocation,
@@ -42,21 +39,19 @@ export function defaultCollectEntityWithLocation(
   data: Record<string, unknown>,
   path: readonly PathPart[],
 ): EntityWithLocation | null {
-  const typename = data[ALIAS_ENTITYCACHE_TYPENAME];
-  const rawId = data[ALIAS_ENTITYCACHE_ID];
+  const typename = getMarkedTypename(data);
+  const id = getMarkedId(data);
 
-  if (typeof typename !== "string" || typename === "") {
+  if (typename === undefined) {
     return null;
   }
 
-  if (typeof rawId !== "string" && typeof rawId !== "number") {
+  if (id === undefined) {
     if (path.length === 1) {
       return { entity: { typename }, path };
     }
     return null;
   }
-
-  const id = String(rawId);
 
   const lastPathPart = path[path.length - 1];
 
@@ -78,8 +73,17 @@ export function defaultGetDocumentString(args: RunQueryArgs): string {
   return memoizedPrint(args.document);
 }
 
+/*
+ * Internal keys start with ":", which no GraphQL type name (and thus no
+ * default entity key) can start with.
+ */
+
+export function defaultBuildResultKey(cacheKey: string) {
+  return `:result:${cacheKey}`;
+}
+
 export function defaultBuildLazyOperationKey(cacheKey: string) {
-  return `operation:${cacheKey}`;
+  return `:operation:${cacheKey}`;
 }
 
 export function defaultBuildEntityKey(entity: EntityRecord) {
@@ -91,5 +95,5 @@ export function defaultBuildEntityKey(entity: EntityRecord) {
 }
 
 export function defaultBuildTypeIndexKey(typename: string) {
-  return `typeindex:${typename}`;
+  return `:typeindex:${typename}`;
 }

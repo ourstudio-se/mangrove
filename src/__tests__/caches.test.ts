@@ -6,6 +6,7 @@ import {
   startRedis,
   stopRedis,
 } from "./harness.js";
+import { createMemoryCache } from "../caches/memory.js";
 import { createRedisCache } from "../caches/redis.js";
 import { spawnSync } from "node:child_process";
 
@@ -155,6 +156,21 @@ for (const [backend, getFactory, available] of backends) {
   });
 }
 
+describe("memory cache specifics", () => {
+  test("expired entries are swept even if never read again", async () => {
+    let time = 0;
+    const cache = createMemoryCache({ now: () => time, sweepInterval: 10 });
+    for (let i = 0; i < 9; i++) {
+      await cache.set(`k${i}`, "v", 100);
+    }
+    await cache.invalidate({ keys: [], markers: ["m"] });
+    expect(cache.size).toBe(10);
+    time = 1_000_000;
+    await cache.set("fresh", "v", 100);
+    expect(cache.size).toBe(1);
+  });
+});
+
 (redisAvailable ? describe : describe.skip)("redis cache specifics", () => {
   test("key prefixes namespace every key", async () => {
     const client = createRedisClient(redisUrl!);
@@ -172,9 +188,9 @@ for (const [backend, getFactory, available] of backends) {
 
     const keys = (await client.keys("*")).sort();
     expect(keys).toEqual([
+      "app1::mangrove:epoch",
+      "app1::mangrove:invalidated:T",
       "app1:k",
-      "app1:mangrove:epoch",
-      "app1:mangrove:invalidated:T",
     ]);
   });
 
