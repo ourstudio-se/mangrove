@@ -197,6 +197,14 @@ describe("schema configuration", () => {
     expect(printed).not.toContain("... on V {\n      __entityCacheId");
   });
 
+  test("decorating is idempotent (servers cache parsed documents)", () => {
+    const { config } = configure(`type Query { a: A } type A { id: ID! }`);
+    const once = config.parser(parse(`{ a { id } }`));
+    expect(config.parser(once)).toBe(once);
+    const client = parseClientQuery(parse(`{ a { id @idField } }`));
+    expect(parseClientQuery(client)).toBe(client);
+  });
+
   test("documents with mutations are left alone", () => {
     const { config } = configure(`
       type Query { a: A } type Mutation { a: A } type A { id: ID! }`);

@@ -71,6 +71,18 @@ function idOnTypeSelection(
 }
 
 /**
+ * Documents produced by the parsers. Servers may cache parsed documents and
+ * feed them through the parser again (e.g. GraphQL Yoga's parser cache), so
+ * decorating must be idempotent.
+ */
+const decoratedDocuments = new WeakSet<DocumentNode>();
+
+function markDecorated(document: DocumentNode) {
+  decoratedDocuments.add(document);
+  return document;
+}
+
+/**
  * Only documents consisting of queries are decorated: anything else is
  * executed without the cache, and fragments shared with mutations or
  * subscriptions would otherwise leak marker fields into their results.
@@ -88,47 +100,53 @@ function isQueryOnlyDocument(document: DocumentNode) {
  * identify entities. Use `@idField` to mark the id field of an entity.
  */
 export const parseClientQuery = memoize1((documentNode: DocumentNode) => {
+  if (decoratedDocuments.has(documentNode)) {
+    return documentNode;
+  }
+
   const decorate = isQueryOnlyDocument(documentNode);
 
-  return visit(documentNode, {
-    Directive: {
-      leave: (directiveNode) => {
-        if (directiveNode.name.value === DIRECTIVE_NAME_IDFIELD) {
-          return null;
-        }
-        return;
+  return markDecorated(
+    visit(documentNode, {
+      Directive: {
+        leave: (directiveNode) => {
+          if (directiveNode.name.value === DIRECTIVE_NAME_IDFIELD) {
+            return null;
+          }
+          return;
+        },
       },
-    },
-    SelectionSet: (selectionSet) => {
-      if (!decorate) {
-        return;
-      }
-
-      const selections = selectionSet.selections;
-      let idField: string | undefined;
-
-      for (const sel of selections) {
-        if (
-          sel.kind === Kind.FIELD &&
-          sel.directives?.some(
-            (dir) => dir.name.value === DIRECTIVE_NAME_IDFIELD,
-          )
-        ) {
-          idField = sel.name.value;
-          break;
+      SelectionSet: (selectionSet) => {
+        if (!decorate) {
+          return;
         }
-      }
 
-      return {
-        ...selectionSet,
-        selections: [
-          ...selections,
-          typenameSelection(),
-          ...(idField ? [idSelection(idField)] : []),
-        ],
-      };
-    },
-  });
+        const selections = selectionSet.selections;
+        let idField: string | undefined;
+
+        for (const sel of selections) {
+          if (
+            sel.kind === Kind.FIELD &&
+            sel.directives?.some(
+              (dir) => dir.name.value === DIRECTIVE_NAME_IDFIELD,
+            )
+          ) {
+            idField = sel.name.value;
+            break;
+          }
+        }
+
+        return {
+          ...selectionSet,
+          selections: [
+            ...selections,
+            typenameSelection(),
+            ...(idField ? [idSelection(idField)] : []),
+          ],
+        };
+      },
+    }),
+  );
 });
 
 function getMarkerSelections(
@@ -165,29 +183,31 @@ export function getParserFromSchema(
   idFieldByTypeName: Map<string, string>,
 ) {
   return memoize1((document: DocumentNode) => {
-    if (!isQueryOnlyDocument(document)) {
+    if (decoratedDocuments.has(document) || !isQueryOnlyDocument(document)) {
       return document;
     }
 
     const typeInfo = new TypeInfo(schema);
 
-    return visit(
-      document,
-      visitWithTypeInfo(typeInfo, {
-        SelectionSet(node) {
-          return {
-            ...node,
-            selections: [
-              ...node.selections,
-              ...getMarkerSelections(
-                schema,
-                typeInfo.getParentType(),
-                idFieldByTypeName,
-              ),
-            ],
-          };
-        },
-      }),
+    return markDecorated(
+      visit(
+        document,
+        visitWithTypeInfo(typeInfo, {
+          SelectionSet(node) {
+            return {
+              ...node,
+              selections: [
+                ...node.selections,
+                ...getMarkerSelections(
+                  schema,
+                  typeInfo.getParentType(),
+                  idFieldByTypeName,
+                ),
+              ],
+            };
+          },
+        }),
+      ),
     );
   });
 }
