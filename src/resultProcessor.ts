@@ -1,8 +1,4 @@
 import {
-  ALIAS_ENTITYCACHE_ID,
-  ALIAS_ENTITYCACHE_TYPENAME,
-} from "./constants.js";
-import {
   EntityWithLocation,
   MakeResultProcessorOpts,
   ObjMap,
@@ -10,85 +6,45 @@ import {
 } from "./typings.js";
 import { ExecutionResult, GraphQLError } from "graphql";
 import {
-  collectEntityRecords,
-  indexWiseDeepMerge,
-  isArray,
-  isCacheAliasName,
-  isObject,
-  not,
-} from "./utils.js";
-import { mergeLink } from "./links.js";
-import { parseCacheResolverAlias } from "./alias.js";
-
-function resolveNextData(prevData: ObjMap<unknown>, nextData: ObjMap<unknown>) {
-  const keys = Object.keys(nextData);
-  const cacheResolverKeys = keys.filter(isCacheAliasName);
-  const nonCacheResolverKeys = keys.filter(not(isCacheAliasName));
-
-  const nextNonResolverData = nonCacheResolverKeys.reduce<ObjMap<unknown>>(
-    (newData, key) => ({
-      ...newData,
-      [key]: nextData[key],
-    }),
-    {},
-  );
-
-  const mergedData = indexWiseDeepMerge(prevData, nextNonResolverData);
-
-  for (const key of cacheResolverKeys) {
-    const coordinates = parseCacheResolverAlias(key);
-    mergeLink(mergedData, coordinates, nextData[key]);
-  }
-
-  return mergedData;
-}
-
-function cleanupData(data: unknown): void {
-  if (isObject(data)) {
-    if (ALIAS_ENTITYCACHE_TYPENAME in data) {
-      delete data[ALIAS_ENTITYCACHE_TYPENAME];
-    }
-
-    if (ALIAS_ENTITYCACHE_ID in data) {
-      delete data[ALIAS_ENTITYCACHE_ID];
-    }
-
-    for (const key of Object.keys(data)) {
-      cleanupData(data[key]);
-    }
-
-    return;
-  }
-
-  if (isArray(data)) {
-    data.forEach(cleanupData);
-    return;
-  }
-
-  return;
-}
+  assertNoLinkStubs,
+  createMergeContext,
+  mergeExecutionData,
+} from "./merge.js";
+import { cleanupData, cloneData, collectEntityRecords } from "./utils.js";
+import { defaultCollectEntityWithLocation } from "./defaults.js";
 
 export function makeResultProcessor({
   entityTtls = {},
-  collectEntityWithLocation,
+  collectEntityWithLocation = defaultCollectEntityWithLocation,
   storeExecutionResult,
   shouldCacheResult = () => true,
   ttl,
   logger = console,
   awaitWriteBeforeResponse = false,
 }: MakeResultProcessorOpts): ResultProcessor {
-  return async ({ cachedResult, cacheKey, originalDocument, nextResults }) => {
-    let collectedEntities: readonly EntityWithLocation[] | undefined;
+  return async (parameter) => {
+    const {
+      cachedResult,
+      cacheKey,
+      originalDocument,
+      nextResults,
+      cacheState,
+    } = parameter;
 
-    let mergedData = cachedResult?.data ?? {};
+    const mergeContext =
+      parameter.mergeContext ?? createMergeContext(cachedResult?.data);
+
+    let mergedData: ObjMap<unknown> = cloneData(
+      (cachedResult?.data as ObjMap<unknown> | null | undefined) ?? {},
+    );
     let mergedErrors: readonly GraphQLError[] = [];
     let extensions: ObjMap<unknown> | undefined;
 
     for (const nextResult of nextResults) {
-      const nextData: ObjMap<unknown> | null | undefined = nextResult.data;
+      const nextData = nextResult.data as ObjMap<unknown> | null | undefined;
 
       if (nextData) {
-        mergedData = resolveNextData(mergedData, nextData);
+        mergedData = mergeExecutionData(mergedData, nextData, mergeContext);
       }
 
       if (nextResult.errors) {
@@ -100,23 +56,29 @@ export function makeResultProcessor({
       }
     }
 
-    const result: ExecutionResult = {
+    if (cachedResult !== undefined) {
+      assertNoLinkStubs(mergedData);
+    }
+
+    const storedResult: ExecutionResult = {
       data: mergedData,
       errors: mergedErrors.length > 0 ? mergedErrors : undefined,
-      extensions,
     };
 
-    if (shouldCacheResult({ cacheKey, result })) {
-      collectedEntities = collectEntityRecords(
-        mergedData,
-        collectEntityWithLocation,
-      );
+    const collectedEntities: readonly EntityWithLocation[] =
+      collectEntityRecords(mergedData, collectEntityWithLocation);
 
+    // A pure cache hit has nothing new to store.
+    const isPureHit = cachedResult !== undefined && nextResults.length === 0;
+
+    if (!isPureHit && shouldCacheResult({ cacheKey, result: storedResult })) {
       const deferredStoreExecution = storeExecutionResult({
         cacheKey,
+        cacheState,
         collectedEntities,
         entityTtls,
-        executionResult: result,
+        executionResult: storedResult,
+        mergedIntoCachedResult: cachedResult !== undefined,
         originalDocument,
         ttl,
       }).catch((err) => {
@@ -131,7 +93,11 @@ export function makeResultProcessor({
       }
     }
 
-    cleanupData(result.data);
+    const result: ExecutionResult = {
+      data: cleanupData(mergedData),
+      errors: storedResult.errors,
+      extensions,
+    };
 
     return { collectedEntities, result };
   };

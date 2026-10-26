@@ -5,40 +5,73 @@ import {
 } from "./constants.js";
 import {
   DocumentNode,
+  FieldNode,
+  GraphQLCompositeType,
   GraphQLSchema,
+  InlineFragmentNode,
   Kind,
+  OperationTypeNode,
+  SelectionNode,
   TypeInfo,
+  isAbstractType,
   visit,
   visitWithTypeInfo,
 } from "graphql";
 import { memoize1 } from "./borrowedTools/memoize.js";
 
-function getCacheSelections(idField?: string) {
-  return [
-    {
-      alias: {
-        kind: Kind.NAME,
-        value: ALIAS_ENTITYCACHE_TYPENAME,
-      },
-      kind: Kind.FIELD,
-      name: {
-        kind: Kind.NAME,
-        value: "__typename",
-      },
-    },
-    ...(idField
-      ? [
-          {
-            alias: { kind: Kind.NAME, value: ALIAS_ENTITYCACHE_ID },
-            kind: Kind.FIELD,
-            name: { kind: Kind.NAME, value: idField },
-          },
-        ]
-      : []),
-  ];
+function typenameSelection(): FieldNode {
+  return {
+    alias: { kind: Kind.NAME, value: ALIAS_ENTITYCACHE_TYPENAME },
+    kind: Kind.FIELD,
+    name: { kind: Kind.NAME, value: "__typename" },
+  };
 }
 
+function idSelection(idField: string): FieldNode {
+  return {
+    alias: { kind: Kind.NAME, value: ALIAS_ENTITYCACHE_ID },
+    kind: Kind.FIELD,
+    name: { kind: Kind.NAME, value: idField },
+  };
+}
+
+function idOnTypeSelection(
+  typename: string,
+  idField: string,
+): InlineFragmentNode {
+  return {
+    kind: Kind.INLINE_FRAGMENT,
+    selectionSet: {
+      kind: Kind.SELECTION_SET,
+      selections: [idSelection(idField)],
+    },
+    typeCondition: {
+      kind: Kind.NAMED_TYPE,
+      name: { kind: Kind.NAME, value: typename },
+    },
+  };
+}
+
+/**
+ * Only documents consisting of queries are decorated: anything else is
+ * executed without the cache, and fragments shared with mutations or
+ * subscriptions would otherwise leak marker fields into their results.
+ */
+function isQueryOnlyDocument(document: DocumentNode) {
+  return document.definitions.every(
+    (definition) =>
+      definition.kind !== Kind.OPERATION_DEFINITION ||
+      definition.operation === OperationTypeNode.QUERY,
+  );
+}
+
+/**
+ * Decorates a client document with the marker fields Mangrove needs to
+ * identify entities. Use `@idField` to mark the id field of an entity.
+ */
 export const parseClientQuery = memoize1((documentNode: DocumentNode) => {
+  const decorate = isQueryOnlyDocument(documentNode);
+
   return visit(documentNode, {
     Directive: {
       leave: (directiveNode) => {
@@ -49,53 +82,89 @@ export const parseClientQuery = memoize1((documentNode: DocumentNode) => {
       },
     },
     SelectionSet: (selectionSet) => {
+      if (!decorate) {
+        return;
+      }
+
       const selections = selectionSet.selections;
       let idField: string | undefined;
 
       for (const sel of selections) {
-        if (sel.kind === Kind.FIELD && sel.directives) {
-          const index = sel.directives.findIndex(
+        if (
+          sel.kind === Kind.FIELD &&
+          sel.directives?.some(
             (dir) => dir.name.value === DIRECTIVE_NAME_IDFIELD,
-          );
-
-          if (index !== -1) {
-            idField = sel.name.value;
-            break;
-          }
+          )
+        ) {
+          idField = sel.name.value;
+          break;
         }
       }
 
       return {
         ...selectionSet,
-        selections: [...selections, ...getCacheSelections(idField)],
+        selections: [
+          ...selections,
+          typenameSelection(),
+          ...(idField ? [idSelection(idField)] : []),
+        ],
       };
     },
   });
 });
+
+function getMarkerSelections(
+  schema: GraphQLSchema,
+  parentType: GraphQLCompositeType | null | undefined,
+  idFieldByTypeName: Map<string, string>,
+): SelectionNode[] {
+  const selections: SelectionNode[] = [typenameSelection()];
+
+  if (!parentType) {
+    return selections;
+  }
+
+  const idField = idFieldByTypeName.get(parentType.name);
+
+  if (idField) {
+    selections.push(idSelection(idField));
+  } else if (isAbstractType(parentType)) {
+    for (const possibleType of schema.getPossibleTypes(parentType)) {
+      const possibleIdField = idFieldByTypeName.get(possibleType.name);
+      if (possibleIdField) {
+        selections.push(idOnTypeSelection(possibleType.name, possibleIdField));
+      }
+    }
+  }
+
+  return selections;
+}
 
 export function getParserFromSchema(
   schema: GraphQLSchema,
   idFieldByTypeName: Map<string, string>,
 ) {
   return memoize1((document: DocumentNode) => {
+    if (!isQueryOnlyDocument(document)) {
+      return document;
+    }
+
     const typeInfo = new TypeInfo(schema);
+
     return visit(
       document,
       visitWithTypeInfo(typeInfo, {
-        OperationDefinition: {
-          enter(node): void | false {
-            if (node.operation !== "query") {
-              return false;
-            }
-          },
-        },
         SelectionSet(node) {
-          const parentType = typeInfo.getParentType();
-          const idField =
-            (parentType && idFieldByTypeName.get(parentType.name)) ?? undefined;
           return {
             ...node,
-            selections: [...node.selections, ...getCacheSelections(idField)],
+            selections: [
+              ...node.selections,
+              ...getMarkerSelections(
+                schema,
+                typeInfo.getParentType(),
+                idFieldByTypeName,
+              ),
+            ],
           };
         },
       }),

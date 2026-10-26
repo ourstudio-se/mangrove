@@ -4,7 +4,6 @@ import { Redis } from "ioredis";
 import { ZlibOptions, deflate, inflate } from "node:zlib";
 import { buildHTTPExecutor } from "@graphql-tools/executor-http";
 import { createRedisCache } from "../../caches/redis.js";
-import { eagerInvalidationStrategy } from "../../invalidationStrategies/eagerInvalidationStrategy.js";
 import { gql } from "../../utils.js";
 import { isPromise } from "../../borrowedTools/isPromise.js";
 import { lazyInvalidationStrategy } from "../../invalidationStrategies/lazyInvalidationStrategy.js";
@@ -19,7 +18,6 @@ import type { Executor } from "@graphql-tools/utils";
 
 const ttl =
   process.env.TTL !== undefined ? parseInt(process.env.TTL) : 60 * 60 * 1000;
-const strategy = process.env.STRATEGY ?? "lazy";
 const useCompression = process.env.USE_COMPRESSION === "true";
 const debugMode = process.env.VSCODE_DEBUG_MODE === "true";
 
@@ -107,13 +105,6 @@ function getInvalidationStrategy() {
     client: new Redis(),
     ...rollCompression({ chunkSize: 1000, useCompression }),
   });
-  if (strategy === "eager") {
-    return eagerInvalidationStrategy({
-      cache,
-      resolvers: cacheResolvers,
-      ttl,
-    });
-  }
   return lazyInvalidationStrategy({ cache });
 }
 

@@ -15,4 +15,5 @@ export const DIRECTIVE_NAME_IDFIELD = "idField";
 export const DIRECTIVE_NAME_CACHERESOLVER = "cacheResolver";
 export const DIRECTIVE_NAME_CACHEENTITY = "cacheEntity";
 
-export const ROOT_ENTITY_ID = JSON.stringify(`{"__root": true}`);
+/** Upper bound on rounds of link queries for a single request. */
+export const MAX_LINK_ROUNDS = 32;

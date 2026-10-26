@@ -4,7 +4,7 @@ import {
   PARTIAL_CACHE_ALIASPREFIX,
 } from "./constants.js";
 import { CacheResolverMap, EntityCacheResult, Id } from "./typings.js";
-import { buildEntityTreeNode, spawnTreeRoot } from "./tree.js";
+import { buildEntityTree } from "./tree.js";
 import { getPartialRecacheQuery } from "./getPartialRecacheQuery.js";
 import { gql, strToDataPath } from "./utils.js";
 import { parse, print, stripIgnoredCharacters } from "graphql";
@@ -74,11 +74,7 @@ describe("getPartialRecacheQuery", () => {
 
     const cacheResolvers: CacheResolverMap = {};
 
-    const entityTree = spawnTreeRoot();
-
-    for (const entityCacheResult of entityCacheResults) {
-      buildEntityTreeNode(entityTree, entityCacheResult, cacheResolvers);
-    }
+    const entityTree = buildEntityTree(entityCacheResults, cacheResolvers);
 
     const result = getPartialRecacheQuery({
       entityTree,
@@ -133,11 +129,7 @@ describe("getPartialRecacheQuery", () => {
 
     const cacheResolvers: CacheResolverMap = {};
 
-    const entityTree = spawnTreeRoot();
-
-    for (const entityCacheResult of entityCacheResults) {
-      buildEntityTreeNode(entityTree, entityCacheResult, cacheResolvers);
-    }
+    const entityTree = buildEntityTree(entityCacheResults, cacheResolvers);
 
     const result = getPartialRecacheQuery({
       entityTree,
@@ -191,11 +183,7 @@ describe("getPartialRecacheQuery", () => {
 
     const cacheResolvers: CacheResolverMap = {};
 
-    const entityTree = spawnTreeRoot();
-
-    for (const entityCacheResult of entityCacheResults) {
-      buildEntityTreeNode(entityTree, entityCacheResult, cacheResolvers);
-    }
+    const entityTree = buildEntityTree(entityCacheResults, cacheResolvers);
 
     const result = getPartialRecacheQuery({
       entityTree,
@@ -252,11 +240,7 @@ describe("getPartialRecacheQuery", () => {
 
     const cacheResolvers: CacheResolverMap = {};
 
-    const entityTree = spawnTreeRoot();
-
-    for (const entityCacheResult of entityCacheResults) {
-      buildEntityTreeNode(entityTree, entityCacheResult, cacheResolvers);
-    }
+    const entityTree = buildEntityTree(entityCacheResults, cacheResolvers);
 
     const partialDocument = getPartialRecacheQuery({
       entityTree,
@@ -306,11 +290,7 @@ describe("getPartialRecacheQuery", () => {
 
     const cacheResolvers: CacheResolverMap = {};
 
-    const entityTree = spawnTreeRoot();
-
-    for (const entityCacheResult of entityCacheResults) {
-      buildEntityTreeNode(entityTree, entityCacheResult, cacheResolvers);
-    }
+    const entityTree = buildEntityTree(entityCacheResults, cacheResolvers);
 
     const result = getPartialRecacheQuery({
       entityTree,
@@ -394,11 +374,7 @@ describe("getPartialRecacheQuery", () => {
 
     const cacheResolvers: CacheResolverMap = {};
 
-    const entityTree = spawnTreeRoot();
-
-    for (const entityCacheResult of entityCacheResults) {
-      buildEntityTreeNode(entityTree, entityCacheResult, cacheResolvers);
-    }
+    const entityTree = buildEntityTree(entityCacheResults, cacheResolvers);
 
     const result = getPartialRecacheQuery({
       entityTree,
@@ -416,6 +392,8 @@ describe("getPartialRecacheQuery", () => {
   dashboard {
     topActivity {
       ... on Activity {
+        ${ALIAS_ENTITYCACHE_ID}: id
+        ${ALIAS_ENTITYCACHE_TYPENAME}: __typename
         relatedUpdate {
           ${ALIAS_ENTITYCACHE_ID}: id
           ${ALIAS_ENTITYCACHE_TYPENAME}: __typename
@@ -496,11 +474,7 @@ describe("getPartialRecacheQuery", () => {
       },
     };
 
-    const entityTree = spawnTreeRoot();
-
-    for (const entityCacheResult of entityCacheResults) {
-      buildEntityTreeNode(entityTree, entityCacheResult, cacheResolvers);
-    }
+    const entityTree = buildEntityTree(entityCacheResults, cacheResolvers);
 
     const result = getPartialRecacheQuery({
       entityTree,
@@ -568,11 +542,13 @@ describe("getPartialRecacheQuery", () => {
       name
     }
     latestUpdates {
-      ${ALIAS_ENTITYCACHE_TYPENAME}: __typename
-      ${ALIAS_ENTITYCACHE_ID}: id
+      ... on UpdateInfo {
+        ${ALIAS_ENTITYCACHE_ID}: id
+        ${ALIAS_ENTITYCACHE_TYPENAME}: __typename
+      }
     }
   }
-  ${PARTIAL_CACHE_ALIASPREFIX}dashboard_topActivity_relatedUpdate_0: getUpdateInfo(id: 2) {
+  ${PARTIAL_CACHE_ALIASPREFIX}dashboard__topActivity__relatedUpdate_i0: getUpdateInfo(id: 2) {
     ... on UpdateInfo {
       ${ALIAS_ENTITYCACHE_ID}: id
       ${ALIAS_ENTITYCACHE_TYPENAME}: __typename
@@ -581,7 +557,7 @@ describe("getPartialRecacheQuery", () => {
       text
     }
   }
-  ${PARTIAL_CACHE_ALIASPREFIX}dashboard_latestUpdates_0: getUpdateInfo(id: 2) {
+  ${PARTIAL_CACHE_ALIASPREFIX}dashboard__latestUpdates_i1: getUpdateInfo(id: 2) {
     ... on UpdateInfo {
       ${ALIAS_ENTITYCACHE_ID}: id
       ${ALIAS_ENTITYCACHE_TYPENAME}: __typename
@@ -644,7 +620,7 @@ describe("getPartialRecacheQuery", () => {
 
     const entityCacheResults: readonly EntityCacheResult[] = [
       UpdateInfo("2", true, 'Query.dashboard.latestUpdates@2#"7"'),
-      UpdateInfo("3", true, 'Query.dashboard.latestUpdates@3"4"'),
+      UpdateInfo("3", true, 'Query.dashboard.latestUpdates@3#"4"'),
       UpdateInfo("2", true, "Query.dashboard.topActivity.relatedUpdate"),
       User("123", true, "Query.dashboard.user"),
       Dashboard("1", false, "Query.dashboard"),
@@ -659,11 +635,7 @@ describe("getPartialRecacheQuery", () => {
       },
     };
 
-    const entityTree = spawnTreeRoot();
-
-    for (const entityCacheResult of entityCacheResults) {
-      buildEntityTreeNode(entityTree, entityCacheResult, cacheResolvers);
-    }
+    const entityTree = buildEntityTree(entityCacheResults, cacheResolvers);
 
     const result = getPartialRecacheQuery({
       entityTree,
@@ -724,11 +696,13 @@ describe("getPartialRecacheQuery", () => {
       name
     }
     latestUpdates {
-      ${ALIAS_ENTITYCACHE_TYPENAME}: __typename
-      ${ALIAS_ENTITYCACHE_ID}: id
+      ... on UpdateInfo {
+        ${ALIAS_ENTITYCACHE_ID}: id
+        ${ALIAS_ENTITYCACHE_TYPENAME}: __typename
+      }
     }
   }
-  ${PARTIAL_CACHE_ALIASPREFIX}dashboard_topActivity_relatedUpdate: getUpdateInfo(id: [2]) {
+  ${PARTIAL_CACHE_ALIASPREFIX}dashboard__topActivity__relatedUpdate_i0: getUpdateInfo(id: [2]) {
     ... on UpdateInfo {
       ${ALIAS_ENTITYCACHE_ID}: id
       ${ALIAS_ENTITYCACHE_TYPENAME}: __typename
@@ -737,7 +711,7 @@ describe("getPartialRecacheQuery", () => {
       text
     }
   }
-  ${PARTIAL_CACHE_ALIASPREFIX}dashboard_latestUpdates: getUpdateInfo(id: [2, 3]) {
+  ${PARTIAL_CACHE_ALIASPREFIX}dashboard__latestUpdates_i1: getUpdateInfo(id: [2, 3]) {
     ... on UpdateInfo {
       ${ALIAS_ENTITYCACHE_ID}: id
       ${ALIAS_ENTITYCACHE_TYPENAME}: __typename
@@ -777,11 +751,7 @@ describe("getPartialRecacheQuery", () => {
       },
     };
 
-    const entityTree = spawnTreeRoot();
-
-    for (const entityCacheResult of entityCacheResults) {
-      buildEntityTreeNode(entityTree, entityCacheResult, cacheResolvers);
-    }
+    const entityTree = buildEntityTree(entityCacheResults, cacheResolvers);
 
     const result = getPartialRecacheQuery({
       entityTree,
@@ -805,11 +775,11 @@ describe("getPartialRecacheQuery", () => {
     ${ALIAS_ENTITYCACHE_TYPENAME}: __typename
     name
     items {
-      ${ALIAS_ENTITYCACHE_TYPENAME}: __typename
       ${ALIAS_ENTITYCACHE_ID}: id
+      ${ALIAS_ENTITYCACHE_TYPENAME}: __typename
     }
   }
-  ${PARTIAL_CACHE_ALIASPREFIX}listQuery_items_0: getRelatedEntity(id: "1") {
+  ${PARTIAL_CACHE_ALIASPREFIX}listQuery__items_i0: getRelatedEntity(id: "1") {
     ${ALIAS_ENTITYCACHE_ID}: id
     ${ALIAS_ENTITYCACHE_TYPENAME}: __typename
     name
@@ -852,11 +822,7 @@ describe("getPartialRecacheQuery", () => {
       },
     };
 
-    const entityTree = spawnTreeRoot();
-
-    for (const entityCacheResult of entityCacheResults) {
-      buildEntityTreeNode(entityTree, entityCacheResult, cacheResolvers);
-    }
+    const entityTree = buildEntityTree(entityCacheResults, cacheResolvers);
 
     const result = getPartialRecacheQuery({
       entityTree,
@@ -869,14 +835,31 @@ describe("getPartialRecacheQuery", () => {
 
     const printedPartial = print(result.query);
 
+    /**
+     * listQuery was invalidated, so everything below it up to the next cache
+     * resolver is refetched, including the membership of `items` (which
+     * leads to the relatedEntity links).
+     */
     // prettier-ignore
     expect(printedPartial).toBe(gql`query MyQuery {
   listQuery {
     ${ALIAS_ENTITYCACHE_ID}: id
     ${ALIAS_ENTITYCACHE_TYPENAME}: __typename
     name
+    items {
+      ... on SomeObject {
+        anotherObject {
+          relatedEntity {
+            ${ALIAS_ENTITYCACHE_ID}: id
+            ${ALIAS_ENTITYCACHE_TYPENAME}: __typename
+          }
+        }
+      }
+    }
   }
-  ${PARTIAL_CACHE_ALIASPREFIX}listQuery_items_anotherObject_relatedEntity_0: getRelatedEntity(id: "2") {
+  ${PARTIAL_CACHE_ALIASPREFIX}listQuery__items__anotherObject__relatedEntity_i0: getRelatedEntity(
+    id: "2"
+  ) {
     ${ALIAS_ENTITYCACHE_ID}: id
     ${ALIAS_ENTITYCACHE_TYPENAME}: __typename
     name
@@ -925,11 +908,7 @@ describe("getPartialRecacheQuery", () => {
       _Entity("C", 3, false, "Query.rootA.b.c"),
     ];
 
-    const entityTree = spawnTreeRoot();
-
-    for (const ecr of entityCacheResults) {
-      buildEntityTreeNode(entityTree, ecr, resolvers);
-    }
+    const entityTree = buildEntityTree(entityCacheResults, resolvers);
 
     const result = getPartialRecacheQuery({
       entityTree,
@@ -1084,11 +1063,7 @@ describe("getPartialRecacheQuery", () => {
 
     const cacheResolvers: CacheResolverMap = {};
 
-    const entityTree = spawnTreeRoot();
-
-    for (const entityCacheResult of entityCacheResults) {
-      buildEntityTreeNode(entityTree, entityCacheResult, cacheResolvers);
-    }
+    const entityTree = buildEntityTree(entityCacheResults, cacheResolvers);
 
     const result = getPartialRecacheQuery({
       entityTree,
@@ -1104,6 +1079,8 @@ describe("getPartialRecacheQuery", () => {
     // prettier-ignore
     expect(printedPartial).toBe(gql`{
   sysAllCases {
+    ${ALIAS_ENTITYCACHE_ID}: key
+    ${ALIAS_ENTITYCACHE_TYPENAME}: __typename
     nodes {
       ${ALIAS_ENTITYCACHE_ID}: key
       ${ALIAS_ENTITYCACHE_TYPENAME}: __typename

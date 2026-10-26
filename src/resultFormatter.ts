@@ -18,9 +18,13 @@ function resultWithCacheExtension(
       ...result.extensions,
       ...metadata,
     },
-  };
+  } as CachedExecutionResult;
 }
 
+/**
+ * Optionally exposes cache metadata (cache key, known entity ids, generated
+ * queries) in the result's extensions. Meant for debugging only.
+ */
 export function makeResultFormatter({
   includeExtensionMetadata,
   ttl,
@@ -33,23 +37,24 @@ export function makeResultFormatter({
     query,
     linkQueries,
   }: FormatResultParameter) => {
-    const expires = Date.now() + ttl;
-
-    if (includeExtensionMetadata) {
-      return resultWithCacheExtension(result, {
-        cache: {
-          cacheKey,
-          expires: new Date(expires),
-          hit: cachedResult !== undefined,
-          knownEntities: serializeKnownEntities(
-            getKnownEntities(collectedEntities ?? []),
-          ),
-          linkQueries: linkQueries?.map(print),
-          partialQuery: query ? print(query) : undefined,
-        },
-      });
+    if (!includeExtensionMetadata) {
+      return result;
     }
 
-    return result;
+    const hit = cachedResult !== undefined;
+
+    return resultWithCacheExtension(result, {
+      cache: {
+        cacheKey,
+        expires: hit ? undefined : new Date(Date.now() + ttl),
+        hit,
+        knownEntities: serializeKnownEntities(
+          getKnownEntities(collectedEntities ?? []),
+        ),
+        linkQueries: linkQueries?.map((linkQuery) => print(linkQuery)),
+        partial: hit && query !== undefined,
+        partialQuery: hit && query ? print(query) : undefined,
+      },
+    });
   };
 }

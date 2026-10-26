@@ -1,45 +1,61 @@
-import { ParseDocument, UsePartialCacheParameter } from "./typings.js";
+import {
+  CacheResolverMap,
+  ParseDocument,
+  UsePartialCacheParameter,
+} from "./typings.js";
 import {
   defaultBuildResponseCacheKey,
   defaultCollectEntityWithLocation,
   defaultGetDocumentString,
   defaultShouldCacheResult,
 } from "./defaults.js";
-import { getParserFromSchema } from "./parser.js";
+import { GraphQLSchema } from "graphql";
 import { isIntrospectionDocument } from "./utils.js";
 import { makeBySchemaConfigGenerator } from "./schemaConfig.js";
 import { makeExecuteWrapper } from "./runner.js";
 import { makeResultFormatter } from "./resultFormatter.js";
 import { makeResultProcessor } from "./resultProcessor.js";
-import { memoize1 } from "./borrowedTools/memoize.js";
 import type { Plugin } from "@envelop/core";
+
+function replaceContents<T>(
+  target: Record<string, T>,
+  ...sources: Record<string, T>[]
+) {
+  for (const key of Object.keys(target)) {
+    delete target[key];
+  }
+  Object.assign(target, ...sources);
+}
 
 export function useMangrove<
   PluginContext extends Record<string, unknown> = NonNullable<unknown>,
 >({
   awaitWriteBeforeResponse,
   invalidationStrategy,
-  entityTtls = {},
+  entityTtls: configuredEntityTtls = {},
   ttl,
   collectEntityWithLocation = defaultCollectEntityWithLocation,
   session,
   enabled,
-  cacheResolvers = {},
+  cacheResolvers: configuredCacheResolvers = {},
   idFields: _idFields = ["id"],
   buildResponseCacheKey = defaultBuildResponseCacheKey,
   getDocumentString = defaultGetDocumentString,
+  logger = console,
   shouldCacheResult = defaultShouldCacheResult,
   includeExtensionMetadata = typeof process !== "undefined"
-    ? process.env["NODE_ENV"] === "development" || !!process.env["DEBUG"]
+    ? process.env["NODE_ENV"] === "development"
     : false,
 }: UsePartialCacheParameter<PluginContext>): Plugin<PluginContext> {
-  enabled = enabled ? memoize1(enabled) : enabled;
   const idFields = new Set(_idFields);
 
-  let parser: ParseDocument | undefined;
+  // Owned by the plugin: configured values, overridden by what the schema
+  // declares. Rebuilt on every schema change.
+  const cacheResolvers: CacheResolverMap = { ...configuredCacheResolvers };
+  const entityTtls: Record<string, number> = { ...configuredEntityTtls };
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let schema: any;
+  let parser: ParseDocument | undefined;
+  let schema: GraphQLSchema | undefined;
 
   const { getPartialExecutionOpts, storeExecutionResult } =
     invalidationStrategy;
@@ -48,6 +64,7 @@ export function useMangrove<
     awaitWriteBeforeResponse,
     collectEntityWithLocation,
     entityTtls,
+    logger,
     shouldCacheResult,
     storeExecutionResult,
     ttl,
@@ -61,18 +78,19 @@ export function useMangrove<
   const wrapExecute = makeExecuteWrapper({
     buildResponseCacheKey,
     cacheResolvers,
-    enabled,
+    enabled: enabled as ((context: unknown) => boolean) | undefined,
     formatResult,
     getDocumentString,
     getPartialExecutionOpts,
+    logger,
     processResult,
-    session,
+    session: session as (context: unknown) => string | undefined | null,
   });
 
-  const configureBySchema = makeBySchemaConfigGenerator({ idFields });
+  const configureBySchema = makeBySchemaConfigGenerator({ idFields, logger });
 
   return {
-    async onExecute(onExecuteParams) {
+    onExecute(onExecuteParams) {
       const executeFn = wrapExecute(onExecuteParams.executeFn);
       onExecuteParams.setExecuteFn(executeFn);
     },
@@ -81,14 +99,13 @@ export function useMangrove<
         if (enabled && !enabled(context)) {
           return;
         }
+        if (!parser || !result || result instanceof Error) {
+          return;
+        }
         if (isIntrospectionDocument(result)) {
           return;
         }
-        if (!parser) {
-          return;
-        }
-        const newDocument = parser(result);
-        replaceParseResult(newDocument);
+        replaceParseResult(parser(result));
       };
     },
     onSchemaChange({ schema: newSchema }) {
@@ -97,17 +114,16 @@ export function useMangrove<
       }
       schema = newSchema;
 
-      const config = configureBySchema(schema);
+      const config = configureBySchema(newSchema);
 
-      parser = getParserFromSchema(schema, config.idFieldByTypeName);
+      parser = config.parser;
 
-      for (const key of Object.keys(config.entityTtls)) {
-        entityTtls[key] = config.entityTtls[key];
-      }
-
-      for (const key of Object.keys(config.cacheResolvers)) {
-        cacheResolvers[key] = config.cacheResolvers[key];
-      }
+      replaceContents(entityTtls, configuredEntityTtls, config.entityTtls);
+      replaceContents(
+        cacheResolvers,
+        configuredCacheResolvers,
+        config.cacheResolvers,
+      );
     },
   };
 }

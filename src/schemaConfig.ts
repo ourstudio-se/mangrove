@@ -1,6 +1,8 @@
 import {
+  CacheResolver,
   CacheResolverMap,
   ConfigureFromSchema,
+  Logger,
   MakeBySchemaConfigGeneratorParameter,
 } from "./typings.js";
 import {
@@ -8,13 +10,17 @@ import {
   DIRECTIVE_NAME_CACHERESOLVER,
 } from "./constants.js";
 import {
-  GraphQLFieldConfig,
+  GraphQLField,
+  GraphQLFloat,
+  GraphQLID,
   GraphQLInt,
   GraphQLObjectType,
   GraphQLSchema,
   GraphQLString,
   GraphQLType,
   getNamedType,
+  isAbstractType,
+  isInterfaceType,
   isListType,
   isNonNullType,
   isObjectType,
@@ -34,101 +40,125 @@ function entityTtlFromObjectType(
   type: GraphQLObjectType,
   schema: GraphQLSchema,
 ): Record<string, number> {
-  const cacheEntityAnnotations = getDirective(
+  const annotation = getDirective(
     schema,
     type,
     DIRECTIVE_NAME_CACHEENTITY,
-  );
+  )?.[0];
 
-  if (!cacheEntityAnnotations || cacheEntityAnnotations.length === 0) {
+  if (typeof annotation?.ttl !== "number") {
     return {};
   }
-
-  const annotation = cacheEntityAnnotations[0];
 
   return {
     [type.name]: annotation.ttl,
   };
 }
 
-function cacheResolverFromQueryRootField(
-  fieldConfig: GraphQLFieldConfig<unknown, unknown>,
-  fieldName: string,
+function keyTypeOf(type: GraphQLType): CacheResolver["type"] | undefined {
+  switch (getNamedType(type)) {
+    case GraphQLInt:
+      return "int";
+    case GraphQLFloat:
+      return "float";
+    case GraphQLString:
+    case GraphQLID:
+      return "string";
+    default:
+      return undefined;
+  }
+}
+
+function cacheResolversFromQueryRootField(
+  field: GraphQLField<unknown, unknown>,
   schema: GraphQLSchema,
+  logger: Logger,
 ): CacheResolverMap {
-  const cacheResolverAnnotations = getDirective(
+  const annotation = getDirective(
     schema,
-    fieldConfig,
+    field,
     DIRECTIVE_NAME_CACHERESOLVER,
+  )?.[0];
+
+  if (!annotation) {
+    return {};
+  }
+
+  const skip = (reason: string) => {
+    logger.warn(
+      `[Mangrove] Ignoring @${DIRECTIVE_NAME_CACHERESOLVER} on Query.${field.name}: ${reason}`,
+    );
+    return {};
+  };
+
+  let keyArg = field.args.find((arg) => arg.name === annotation.keyArg);
+
+  if (annotation.keyArg !== undefined && annotation.keyArg !== null) {
+    if (!keyArg) {
+      return skip(`argument "${annotation.keyArg}" does not exist`);
+    }
+  } else {
+    const required = field.args.filter(
+      (arg) => isNonNullType(arg.type) && arg.defaultValue === undefined,
+    );
+    if (field.args.length === 1) {
+      keyArg = field.args[0];
+    } else if (required.length === 1) {
+      keyArg = required[0];
+    } else {
+      return skip(
+        "the field must have exactly one (required) argument, or specify keyArg",
+      );
+    }
+  }
+
+  const otherRequiredArg = field.args.find(
+    (arg) =>
+      arg !== keyArg &&
+      isNonNullType(arg.type) &&
+      arg.defaultValue === undefined,
   );
 
-  if (!cacheResolverAnnotations || cacheResolverAnnotations.length === 0) {
-    return {};
+  if (otherRequiredArg) {
+    return skip(`argument "${otherRequiredArg.name}" is also required`);
   }
 
-  const args = fieldConfig.args;
-
-  if (!args) {
-    return {};
-  }
-
-  const annotation = cacheResolverAnnotations[0];
-
-  let keyArgName: string | undefined = undefined;
-
-  const argKeys = Object.keys(args);
-
-  if (annotation.keyArg && argKeys.includes(annotation.keyArg)) {
-    keyArgName = annotation.keyArg;
-  } else if (argKeys.length === 1) {
-    keyArgName = argKeys[0];
-  }
-
-  if (!keyArgName) {
-    return {};
-  }
-
-  const keyArg = args[keyArgName];
-
-  const fieldTypeIsBatch = isBatchType(fieldConfig.type);
-  const argTypeIsBatch = isBatchType(keyArg.type);
-
-  const batch = fieldTypeIsBatch && argTypeIsBatch;
-
-  const namedType = getNamedType(fieldConfig.type);
-
-  if (!isObjectType(namedType)) {
-    return {};
-  }
-
-  let type: "string" | "int" | undefined;
-
-  switch (getNamedType(keyArg.type)) {
-    case GraphQLInt:
-      type = "int";
-      break;
-    case GraphQLString:
-    default:
-      type = "string";
-      break;
-  }
+  const type = keyTypeOf(keyArg!.type);
 
   if (!type) {
-    return {};
+    return skip(
+      `key argument type ${getNamedType(keyArg!.type).name} is not supported (use ID, String, Int or Float)`,
+    );
   }
 
-  return {
-    [namedType.name]: {
-      batch,
-      idArg: keyArgName,
-      rootField: fieldName,
-      type,
-    },
+  const batch = isBatchType(field.type) && isBatchType(keyArg!.type);
+
+  const resolver: CacheResolver = {
+    batch,
+    idArg: keyArg!.name,
+    rootField: field.name,
+    type,
   };
+
+  const namedType = getNamedType(field.type);
+
+  if (isObjectType(namedType)) {
+    return { [namedType.name]: resolver };
+  }
+
+  if (isAbstractType(namedType)) {
+    // e.g. `node(id: ID!): Node`: resolves every possible type.
+    return Object.fromEntries(
+      schema.getPossibleTypes(namedType).map((type) => [type.name, resolver]),
+    );
+  }
+
+  return skip("the field must return an object, interface or union type");
 }
 
 export function makeBySchemaConfigGenerator({
   idFields,
+  logger = console,
 }: MakeBySchemaConfigGeneratorParameter): ConfigureFromSchema {
   return (schema: GraphQLSchema) => {
     const cacheResolverDirective = schema.getDirective(
@@ -138,8 +168,7 @@ export function makeBySchemaConfigGenerator({
       DIRECTIVE_NAME_CACHEENTITY,
     );
 
-    let entityTtls: Record<string, number> = {};
-    let cacheResolvers: CacheResolverMap = {};
+    const entityTtls: Record<string, number> = {};
     const idFieldByTypeName = new Map<string, string>();
 
     const typeMap = schema.getTypeMap();
@@ -147,40 +176,49 @@ export function makeBySchemaConfigGenerator({
     for (const typename of Object.keys(typeMap)) {
       const type = typeMap[typename];
 
-      if (!isObjectType(type)) {
+      if (typename.startsWith("__")) {
         continue;
       }
 
-      if (cacheEntityDirective) {
-        entityTtls = {
-          ...entityTtls,
-          ...entityTtlFromObjectType(type, schema),
-        };
+      if (!isObjectType(type) && !isInterfaceType(type)) {
+        continue;
+      }
+
+      if (cacheEntityDirective && isObjectType(type)) {
+        Object.assign(entityTtls, entityTtlFromObjectType(type, schema));
       }
 
       const fieldMap = type.getFields();
 
-      for (const fieldname of Object.keys(fieldMap)) {
-        if (idFields.has(fieldname) && !idFieldByTypeName.has(typename)) {
-          idFieldByTypeName.set(typename, fieldname);
+      for (const idField of idFields) {
+        if (idField in fieldMap) {
+          idFieldByTypeName.set(typename, idField);
+          break;
         }
       }
     }
 
-    if (cacheResolverDirective) {
-      const queryFieldMap = schema.getQueryType()?.toConfig().fields ?? {};
+    const abstractResolvers: CacheResolverMap = {};
+    const objectResolvers: CacheResolverMap = {};
 
-      for (const fieldname of Object.keys(queryFieldMap)) {
-        const fieldConfig = queryFieldMap[fieldname];
-        cacheResolvers = {
-          ...cacheResolvers,
-          ...cacheResolverFromQueryRootField(fieldConfig, fieldname, schema),
-        };
+    if (cacheResolverDirective) {
+      const queryFields = schema.getQueryType()?.getFields() ?? {};
+
+      for (const fieldname of Object.keys(queryFields)) {
+        const field = queryFields[fieldname];
+        const target = isObjectType(getNamedType(field.type))
+          ? objectResolvers
+          : abstractResolvers;
+        Object.assign(
+          target,
+          cacheResolversFromQueryRootField(field, schema, logger),
+        );
       }
     }
 
     return {
-      cacheResolvers,
+      // Resolvers declared for a concrete type take precedence.
+      cacheResolvers: { ...abstractResolvers, ...objectResolvers },
       entityTtls,
       idFieldByTypeName,
       parser: getParserFromSchema(schema, idFieldByTypeName),

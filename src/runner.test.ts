@@ -6,6 +6,7 @@ import {
 import { CacheResolverMap } from "./typings.js";
 import { bindExecute, layeredCacheExecute } from "./runner.js";
 import { execute, parse, print } from "graphql";
+import { getCacheResolverAlias } from "./alias.js";
 import { gql } from "./utils.js";
 import { makeExecutableSchema } from "@graphql-tools/schema";
 import { parseClientQuery } from "./parser.js";
@@ -49,7 +50,7 @@ describe("layeredCacheExecute", () => {
     const partialQuery = parseClientQuery(
       parse(gql`
         query MyQuery {
-          ${PARTIAL_CACHE_ALIASPREFIX}someQuery_a_0: a(id: "1") {
+          ${getCacheResolverAlias("Query.someQuery.a", 0)}: a(id: "1") {
             id @idField
             b {
               ${ALIAS_ENTITYCACHE_TYPENAME}: __typename
@@ -113,7 +114,6 @@ describe("layeredCacheExecute", () => {
     };
 
     const result = await layeredCacheExecute({
-      knownEntities: {},
       linkSelections,
       originalOperationName: "MyQuery",
       partialQuery,
@@ -124,7 +124,7 @@ describe("layeredCacheExecute", () => {
     const linkQueries = result.linkQueries;
 
     expect(print(linkQueries[0])).toBe(gql`query MyQuery__linkQuery {
-  ${PARTIAL_CACHE_ALIASPREFIX}someQuery_a_b_0: b(id: "2") {
+  ${PARTIAL_CACHE_ALIASPREFIX}someQuery__a__b_i0: b(id: "2") {
     id
     ${ALIAS_ENTITYCACHE_TYPENAME}: __typename
     ${ALIAS_ENTITYCACHE_ID}: id
@@ -136,7 +136,7 @@ describe("layeredCacheExecute", () => {
 }`);
 
     expect(print(linkQueries[1])).toBe(gql`query MyQuery__linkQuery {
-  ${PARTIAL_CACHE_ALIASPREFIX}someQuery_a_b_c_0: c(id: "3") {
+  ${PARTIAL_CACHE_ALIASPREFIX}someQuery__a__b__c_i0: c(id: "3") {
     id
     ${ALIAS_ENTITYCACHE_TYPENAME}: __typename
     ${ALIAS_ENTITYCACHE_ID}: id
