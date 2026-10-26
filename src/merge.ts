@@ -244,6 +244,24 @@ function recordFresh(
   }
 }
 
+/**
+ * Data to complete a link stub with: a cached snapshot of the entity at the
+ * same coordinates (patched with fresh data), or else fresh data received
+ * for it at those coordinates earlier in the request.
+ */
+function completeLink(
+  coordinates: string,
+  identity: string,
+  context: MergeContext,
+): ObjMap<unknown> | undefined {
+  const snapshot = context.snapshots.get(coordinates, identity);
+  if (snapshot !== undefined) {
+    return copySnapshot(snapshot, coordinates, context);
+  }
+  const fresh = context.fresh.get(coordinates, identity);
+  return fresh !== undefined ? cloneData(fresh) : undefined;
+}
+
 /** A private, up-to-date copy of a cached snapshot. */
 function copySnapshot(
   snapshot: ObjMap<unknown>,
@@ -327,11 +345,7 @@ export function mergeData(
       if (inList !== undefined) {
         base = cloneData(inList);
       } else if (isLinkStub(item)) {
-        const snapshot = snapshots.get(coordinates, identity);
-        base =
-          snapshot !== undefined
-            ? copySnapshot(snapshot, coordinates, context)
-            : undefined;
+        base = completeLink(coordinates, identity, context);
       }
       return mergeData(base, item, coordinates, context, recordFresh);
     });
@@ -369,14 +383,10 @@ export function mergeData(
       const identity = isLinkStub(source)
         ? getEntityIdentity(source)
         : undefined;
-      const snapshot =
-        identity !== undefined
-          ? snapshots.get(coordinates, identity)
-          : undefined;
       base =
-        snapshot !== undefined
-          ? copySnapshot(snapshot, coordinates, context)
-          : {};
+        (identity !== undefined
+          ? completeLink(coordinates, identity, context)
+          : undefined) ?? {};
     }
 
     for (const key of Object.keys(source)) {
@@ -503,6 +513,10 @@ export function mergeExecutionData(
     CoordinateRoot.query,
     context,
   ) as ObjMap<unknown>;
+
+  // Shallower coordinates first: merging them can create the positions that
+  // deeper resolutions are merged into.
+  resolutions.sort(([a], [b]) => a.split(".").length - b.split(".").length);
 
   for (const [coordinates, value, alias] of resolutions) {
     mergeResolvedEntities(

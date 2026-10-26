@@ -9,6 +9,7 @@ import {
   validate,
 } from "graphql";
 import { ChildProcess, spawn } from "node:child_process";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { Redis } from "ioredis";
 import { createMemoryCache } from "../caches/memory.js";
 import { createRedisCache } from "../caches/redis.js";
@@ -81,10 +82,13 @@ export function createHarness({
   })(schema);
   const strategy = lazyInvalidationStrategy({ cache, logger });
 
-  const executed: string[] = [];
+  // Documents executed by each run, kept apart for concurrent runs.
+  const executedByRun = new AsyncLocalStorage<string[]>();
+  // FUZZ_NO_VALIDATE lets fuzzing see what non-validating executors would do.
+  const shouldValidate = !process.env.FUZZ_NO_VALIDATE;
 
   const validatingExecute = ((args: ExecutionArgs) => {
-    const errors = validate(schema, args.document);
+    const errors = shouldValidate ? validate(schema, args.document) : [];
     if (errors.length > 0) {
       throw new Error(
         `Mangrove executed an invalid document:\n${print(args.document)}\n${errors
@@ -92,7 +96,7 @@ export function createHarness({
           .join("\n")}`,
       );
     }
-    executed.push(print(args.document));
+    executedByRun.getStore()?.push(print(args.document));
     return execute(args);
   }) as typeof execute;
 
@@ -116,17 +120,19 @@ export function createHarness({
     query: string | DocumentNode,
     { operationName, variables }: RunOptions = {},
   ): Promise<RunResult> {
-    executed.length = 0;
+    const executed: string[] = [];
     const document = config.parser(
       typeof query === "string" ? parse(query) : query,
     );
-    const result = (await wrapped({
-      document,
-      operationName,
-      schema,
-      variableValues: variables,
-    })) as CachedExecutionResult;
-    return { executed: [...executed], result };
+    const result = (await executedByRun.run(executed, () =>
+      wrapped({
+        document,
+        operationName,
+        schema,
+        variableValues: variables,
+      }),
+    )) as CachedExecutionResult;
+    return { executed, result };
   }
 
   return { config, logger, run, schema, strategy };
