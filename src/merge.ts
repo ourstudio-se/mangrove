@@ -11,6 +11,10 @@ import { isCacheAliasName, parseCacheResolverAlias } from "./alias.js";
  */
 export class CacheMergeError extends Error {}
 
+export function identityOf(typename: string, id: string) {
+  return `${typename}\u0000${id}`;
+}
+
 export function getEntityIdentity(value: unknown): string | undefined {
   if (!isObject(value)) {
     return undefined;
@@ -20,7 +24,7 @@ export function getEntityIdentity(value: unknown): string | undefined {
   if (typename === undefined || id === undefined) {
     return undefined;
   }
-  return JSON.stringify([typename, id]);
+  return identityOf(typename, id);
 }
 
 /** An object that only identifies an entity, left behind by a link. */
@@ -108,7 +112,7 @@ export class EntitySnapshots {
 export class FreshEntities {
   private readonly byCoordinates = new Map<
     string,
-    Map<string, ObjMap<unknown>[]>
+    Map<string, ObjMap<unknown>>
   >();
 
   add(coordinates: string, identity: string, entity: ObjMap<unknown>) {
@@ -117,17 +121,31 @@ export class FreshEntities {
       entities = new Map();
       this.byCoordinates.set(coordinates, entities);
     }
-    const list = entities.get(identity);
-    if (list) {
-      list.push(entity);
-    } else {
-      entities.set(identity, [entity]);
-    }
+    // Everything received for the same entity at the same coordinates comes
+    // from the same selection set (possibly narrowed): overlay it.
+    entities.set(identity, overlay(entities.get(identity), entity));
   }
 
-  get(coordinates: string, identity: string): readonly ObjMap<unknown>[] {
-    return this.byCoordinates.get(coordinates)?.get(identity) ?? [];
+  get(coordinates: string, identity: string): ObjMap<unknown> | undefined {
+    return this.byCoordinates.get(coordinates)?.get(identity);
   }
+}
+
+/** Field-by-field overlay of `source` onto a copy of `target`. */
+function overlay(
+  target: ObjMap<unknown> | undefined,
+  source: ObjMap<unknown>,
+): ObjMap<unknown> {
+  const result: ObjMap<unknown> = { ...target };
+  for (const key of Object.keys(source)) {
+    const value = source[key];
+    const existing = result[key];
+    result[key] =
+      isObject(value) && isObject(existing)
+        ? overlay(existing as ObjMap<unknown>, value as ObjMap<unknown>)
+        : value;
+  }
+  return result;
 }
 
 export interface MergeContext {
@@ -172,7 +190,8 @@ function patchWithFresh(
   const identity = getEntityIdentity(patched);
 
   if (identity !== undefined) {
-    for (const fresh of context.fresh.get(coordinates, identity)) {
+    const fresh = context.fresh.get(coordinates, identity);
+    if (fresh !== undefined) {
       patched = mergeData(
         patched,
         fresh,
@@ -275,30 +294,46 @@ export function mergeData(
 
   if (isArray(source)) {
     const targetList = isArray(target) ? target : [];
+    let byIdentity: Map<string, unknown> | undefined;
+
     return source.map((item, index) => {
-      if (isObject(item)) {
-        const identity = getEntityIdentity(item);
-        if (identity !== undefined) {
-          const inList = targetList.find(
-            (t) => getEntityIdentity(t) === identity,
-          );
-          const snapshot = snapshots.get(coordinates, identity);
-          const base =
-            inList !== undefined
-              ? cloneData(inList)
-              : snapshot !== undefined
-                ? copySnapshot(snapshot, coordinates, context)
-                : undefined;
-          return mergeData(base, item, coordinates, context, recordFresh);
+      const identity = getEntityIdentity(item);
+
+      if (identity === undefined) {
+        return mergeData(
+          targetList[index],
+          item,
+          coordinates,
+          context,
+          recordFresh,
+        );
+      }
+
+      if (byIdentity === undefined) {
+        byIdentity = new Map();
+        for (const candidate of targetList) {
+          const candidateIdentity = getEntityIdentity(candidate);
+          if (
+            candidateIdentity !== undefined &&
+            !byIdentity.has(candidateIdentity)
+          ) {
+            byIdentity.set(candidateIdentity, candidate);
+          }
         }
       }
-      return mergeData(
-        targetList[index],
-        item,
-        coordinates,
-        context,
-        recordFresh,
-      );
+
+      const inList = byIdentity.get(identity);
+      let base: unknown;
+      if (inList !== undefined) {
+        base = cloneData(inList);
+      } else if (isLinkStub(item)) {
+        const snapshot = snapshots.get(coordinates, identity);
+        base =
+          snapshot !== undefined
+            ? copySnapshot(snapshot, coordinates, context)
+            : undefined;
+      }
+      return mergeData(base, item, coordinates, context, recordFresh);
     });
   }
 
@@ -330,7 +365,10 @@ export function mergeData(
           `Object at ${coordinates} changed without being invalidated`,
         );
       }
-      const identity = getEntityIdentity(source);
+      // Only links need completing; anything else was fetched in full.
+      const identity = isLinkStub(source)
+        ? getEntityIdentity(source)
+        : undefined;
       const snapshot =
         identity !== undefined
           ? snapshots.get(coordinates, identity)
@@ -394,7 +432,7 @@ export function mergeResolvedEntities(
   }
 
   for (const id of expected?.ids ?? []) {
-    if (!fetched.has(JSON.stringify([expected!.typename, id]))) {
+    if (!fetched.has(identityOf(expected!.typename, id))) {
       throw new CacheMergeError(
         `Cache resolver at ${coordinates} did not return ${expected!.typename}:${id}`,
       );

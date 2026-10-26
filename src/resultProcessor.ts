@@ -33,9 +33,15 @@ export function makeResultProcessor({
     const mergeContext =
       parameter.mergeContext ?? createMergeContext(cachedResult?.data);
 
-    let mergedData: ObjMap<unknown> = cloneData(
-      (cachedResult?.data as ObjMap<unknown> | null | undefined) ?? {},
-    );
+    // Nothing to merge into: a plain execution result is used as is.
+    const isPlainExecution =
+      cachedResult === undefined && nextResults.length === 1;
+
+    let mergedData: ObjMap<unknown> = isPlainExecution
+      ? (nextResults[0].data as ObjMap<unknown> | null | undefined) ?? {}
+      : cloneData(
+          (cachedResult?.data as ObjMap<unknown> | null | undefined) ?? {},
+        );
     // Errors stored with the cached result (if results with errors are
     // cached at all) still apply to the parts of it that weren't refetched.
     let mergedErrors: readonly GraphQLError[] = cachedResult?.errors ?? [];
@@ -44,7 +50,7 @@ export function makeResultProcessor({
     for (const [index, nextResult] of nextResults.entries()) {
       const nextData = nextResult.data as ObjMap<unknown> | null | undefined;
 
-      if (nextData) {
+      if (nextData && !isPlainExecution) {
         mergedData = mergeExecutionData(
           mergedData,
           nextData,

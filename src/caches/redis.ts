@@ -86,62 +86,73 @@ return 1
 `;
 
 /*
+ * Adds members to any number of sets in one call.
+ *
  * KEYS[1]     condition key
- * KEYS[2]     set key
- * KEYS[3..]   invalidation marker keys
+ * KEYS[2..]   per set: the set key, followed by its invalidation marker keys
  * ARGV[1]     condition epoch, or ""
- * ARGV[2]     guard epoch, or "" for no guard
- * ARGV[3]     now (ms)
- * ARGV[4]     "z" (sorted set) or "s" (set)
- * ARGV[5]     "1" to only add new members, "0" to also extend existing ones
- * ARGV[6..]   expiresAt, member pairs
+ * ARGV[2]     now (ms)
+ * ARGV[3]     "z" (sorted sets) or "s" (sets)
+ * ARGV[4]     number of sets
+ * ARGV[5..]   per set: marker count, guard epoch (or ""), "1" to only add new
+ *             members (never extend existing ones), member count, then
+ *             expiresAt, member pairs
  */
 const ADD_MEMBERS_SCRIPT = `${CONDITION_CHECK}
-local guard = ARGV[2]
-if guard ~= "" then
-  local epoch = tonumber(guard)
-  for i = 3, #KEYS do
-    local invalidatedAt = redis.call("GET", KEYS[i])
-    if invalidatedAt and tonumber(invalidatedAt) > epoch then
-      return 0
+local now = tonumber(ARGV[2])
+local sorted = ARGV[3] == "z"
+local k = 2
+local a = 5
+for _ = 1, tonumber(ARGV[4]) do
+  local key = KEYS[k]
+  local markerCount = tonumber(ARGV[a])
+  local guard = ARGV[a + 1]
+  local onlyNew = ARGV[a + 2] == "1"
+  local memberCount = tonumber(ARGV[a + 3])
+  a = a + 4
+  local skip = false
+  if guard ~= "" then
+    local epoch = tonumber(guard)
+    for i = k + 1, k + markerCount do
+      local invalidatedAt = redis.call("GET", KEYS[i])
+      if invalidatedAt and tonumber(invalidatedAt) > epoch then
+        skip = true
+        break
+      end
     end
   end
-end
-local key = KEYS[2]
-local now = tonumber(ARGV[3])
-local sorted = ARGV[4] == "z"
-local onlyNew = ARGV[5] == "1"
-local maxExpiresAt = 0
-if sorted then
-  redis.call("ZREMRANGEBYSCORE", key, "-inf", now)
-end
-for i = 6, #ARGV, 2 do
-  local expiresAt = tonumber(ARGV[i])
-  local member = ARGV[i + 1]
-  if sorted then
-    local current = redis.call("ZSCORE", key, member)
-    if not current then
-      redis.call("ZADD", key, expiresAt, member)
-    elseif not onlyNew and tonumber(current) < expiresAt then
-      redis.call("ZADD", key, expiresAt, member)
+  if not skip then
+    local maxExpiresAt = 0
+    if sorted then
+      redis.call("ZREMRANGEBYSCORE", key, "-inf", now)
     end
-  else
-    redis.call("SADD", key, member)
+    for i = a, a + 2 * memberCount - 1, 2 do
+      local expiresAt = tonumber(ARGV[i])
+      local member = ARGV[i + 1]
+      if sorted then
+        local current = redis.call("ZSCORE", key, member)
+        if not current then
+          redis.call("ZADD", key, expiresAt, member)
+        elseif not onlyNew and tonumber(current) < expiresAt then
+          redis.call("ZADD", key, expiresAt, member)
+        end
+      else
+        redis.call("SADD", key, member)
+      end
+      if expiresAt > maxExpiresAt then
+        maxExpiresAt = expiresAt
+      end
+    end
+    local pttl = redis.call("PTTL", key)
+    if pttl ~= -2 and (pttl < 0 or now + pttl < maxExpiresAt) then
+      redis.call("PEXPIREAT", key, maxExpiresAt)
+    end
   end
-  if expiresAt > maxExpiresAt then
-    maxExpiresAt = expiresAt
-  end
-end
-local pttl = redis.call("PTTL", key)
-if pttl == -2 then
-  return 1
-end
-if pttl < 0 or now + pttl < maxExpiresAt then
-  redis.call("PEXPIREAT", key, maxExpiresAt)
+  k = k + 1 + markerCount
+  a = a + 2 * memberCount
 end
 return 1
 `;
-
 /*
  * KEYS[1]                epoch key
  * KEYS[2..ARGV[1]+1]     invalidation marker keys
@@ -291,10 +302,27 @@ export const createRedisCache = ({
    * script, so that it can be made conditional, and so that a transaction
    * failing on a missing script applies nothing.
    */
+  interface AddBatch {
+    args: (string | number)[];
+    keys: string[];
+    sets: number;
+  }
+
   function recordMutations(
-    record: (operation: Operation) => void,
+    recordOperation: (operation: Operation) => void,
     condition?: StoreCondition,
   ): CacheMutations {
+    let batch: AddBatch | undefined;
+
+    const record = (operation: Operation) => {
+      recordOperation(operation);
+    };
+    // Any other mutation ends the current batch of additions, which keeps
+    // the order of operations intact.
+    const recordOther = (operation: Operation) => {
+      batch = undefined;
+      recordOperation(operation);
+    };
     // Unconditional writes still need a key in the first slot.
     const conditionKey = condition ? k(condition.key) : epochKey;
     const conditionEpoch = condition ? condition.epoch : "";
@@ -322,28 +350,41 @@ export const createRedisCache = ({
           return;
         }
 
-        const keys = [
-          conditionKey,
-          k(key),
-          ...(guard?.markers ?? []).map(markerKey),
-        ];
-        const args = [
-          conditionEpoch,
-          guard ? guard.epoch : "",
-          now,
-          allowDistinctMemberTTLs ? "z" : "s",
-          onlyNew ? "1" : "0",
-          ...pairs,
-        ];
+        if (!batch) {
+          // Consecutive additions are sent as a single script call.
+          const current: AddBatch = { args: [], keys: [], sets: 0 };
+          batch = current;
+          record((operator) =>
+            callScript(
+              operator,
+              ADD_MEMBERS_COMMAND,
+              [conditionKey, ...current.keys],
+              [
+                conditionEpoch,
+                Date.now(),
+                allowDistinctMemberTTLs ? "z" : "s",
+                current.sets,
+                ...current.args,
+              ],
+            ),
+          );
+        }
 
-        record((operator) =>
-          callScript(operator, ADD_MEMBERS_COMMAND, keys, args),
+        const markers = (guard?.markers ?? []).map(markerKey);
+        batch.sets += 1;
+        batch.keys.push(k(key), ...markers);
+        batch.args.push(
+          markers.length,
+          guard ? guard.epoch : "",
+          onlyNew ? "1" : "0",
+          pairs.length / 2,
+          ...pairs,
         );
       },
       async clear(keys) {
         for (const key of keys) {
           const prefixed = k(key);
-          record((operator) =>
+          recordOther((operator) =>
             callScript(
               operator,
               WRITE_COMMAND,
@@ -359,7 +400,7 @@ export const createRedisCache = ({
           return;
         }
         const prefixed = k(key);
-        record((operator) =>
+        recordOther((operator) =>
           callScript(
             operator,
             WRITE_COMMAND,
@@ -379,7 +420,7 @@ export const createRedisCache = ({
         }
         const compressed = await compression(data);
         const prefixed = k(key);
-        record((operator) =>
+        recordOther((operator) =>
           callScript(
             operator,
             WRITE_COMMAND,
