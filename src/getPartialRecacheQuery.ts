@@ -260,6 +260,11 @@ export function getPartialRecacheQuery({
           }
 
           if (field.selectionSet.selections.length === 0) {
+            // Removing the field narrows the parent's selection set as well.
+            const coordinates = invalidator.getCoordinates();
+            prunedCoordinates.push(
+              coordinates.slice(0, coordinates.lastIndexOf(".")),
+            );
             return null;
           }
 

@@ -142,3 +142,51 @@ describe("reading a result while another request refreshes it", () => {
     });
   }
 });
+
+test("a new list member isn't completed from fields removed from the query", async () => {
+  const libraries: any[] = [
+    { best: "b1", id: 1, shelves: ["s1"] },
+    { best: "b2", id: 2, shelves: ["s2"] },
+  ];
+  const shelves: Record<string, any> = {
+    s1: { id: "s1", name: "s1" },
+    s2: { id: "s2", name: "s2" },
+    s3: { id: "s3", name: "s3" },
+  };
+  const books: Record<string, any> = {
+    b1: { id: "b1" },
+    b2: { id: "b2" },
+    b3: { id: "b3" },
+  };
+  const h = createHarness({
+    cache: await memoryCacheFactory(),
+    resolvers: {
+      Library: {
+        shelves: (l: any) => l.shelves.map((id: string) => shelves[id]),
+        stats: (l: any) => ({ best: books[l.best], count: l.shelves.length }),
+      },
+      Query: {
+        book: (_: unknown, { id }: any) => books[id],
+        libraries: () => libraries,
+      },
+    },
+    typeDefs: `
+      type Query { libraries: [Library!]! book(id: ID!): Book @cacheResolver }
+      type Library { id: Int! stats: Stats! shelves: [Shelf!]! }
+      type Stats { count: Int! best: Book }
+      type Shelf { id: ID! name: String! }
+      type Book { id: ID! }`,
+  });
+  const query = `{ libraries { id stats { count best { id } } shelves { id name } } }`;
+
+  await expectFresh(h, query);
+  // Shelf s1 is refetched through the list, where library 3 turns up. Its
+  // `stats` were left out of the query, as they hadn't changed for the
+  // libraries in the cached result.
+  libraries.push({ best: "b3", id: 3, shelves: ["s3"] });
+  shelves.s1.name = "changed";
+  await h.strategy.invalidateEntities([{ id: "s1", typename: "Shelf" }]);
+
+  await expectFresh(h, query);
+  await expectFresh(h, query);
+});
