@@ -1,16 +1,22 @@
 const ROOT_DIR = __dirname;
 
 module.exports = {
-  globals: {
-    "ts-jest": {
-      tsconfig: "tsconfig-jest.json",
-    },
-  },
   moduleFileExtensions: ["ts", "json", "js"],
-  modulePathIgnorePatterns: ["dist", "test-assets", "test-files", "fixtures"],
+  // Source files use ESM-compatible `.js` import specifiers; resolve them to the `.ts` sources.
+  moduleNameMapper: {
+    "^(\\.{1,2}/.*)\\.js$": "$1",
+  },
+  modulePathIgnorePatterns: [
+    "dist",
+    "lib",
+    "test-assets",
+    "test-files",
+    "fixtures",
+  ],
   rootDir: ROOT_DIR,
   testEnvironment: "node",
+  testRegex: "\\.test\\.ts$",
   transform: {
-    ".ts": "ts-jest",
-  }
-}
+    "\\.ts$": ["ts-jest", { tsconfig: "tsconfig-jest.json" }],
+  },
+};
