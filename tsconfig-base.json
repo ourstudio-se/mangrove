@@ -1,6 +1,6 @@
 {
   "include": ["./src/**/*"],
-  "exclude": ["./src/**/*.test.ts"],
+  "exclude": ["./src/**/*.test.ts", "./src/__tests__/**", "./src/examples/**"],
   "compilerOptions": {
     "lib": ["es5", "es6", "es7", "es2017", "dom"],
     "sourceMap": true,
@@ -9,7 +9,7 @@
     "target": "ES2022",
     "moduleResolution": "node",
     "forceConsistentCasingInFileNames": true,
-    "importHelpers": true,
+    "importHelpers": false,
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "noImplicitReturns": true,

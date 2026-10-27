@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 
 project_dir=$1
 lib_dir=$project_dir/lib

@@ -1,147 +1,353 @@
+import { ALIAS_ENTITYCACHE_TYPENAME } from "./constants.js";
+import { isIdMarkerKey, isMarkerKey } from "./markers.js";
 import {
+  ASTVisitor,
   DocumentNode,
   FieldNode,
   Kind,
   OperationDefinitionNode,
+  OperationTypeNode,
+  SelectionNode,
   SelectionSetNode,
   visit,
 } from "graphql";
-import { EntityTreeNode } from "./typings.js";
-import { convertFieldNodeToLink } from "./links.js";
-import { getCacheResolutionMapper } from "./getCacheResolutionMapper.js";
-import { memoInlineFragments, pruneSelectionSet } from "./utils.js";
-import { visitWithEntityTree } from "./tree.js";
+import { EntityTree, visitWithEntityTree } from "./tree.js";
+import {
+  ResolutionAliases,
+  mapCacheResolutions,
+} from "./getCacheResolutionMapper.js";
+import {
+  getOperation,
+  memoInlineFragments,
+  pruneSelectionSet,
+  pruneUnusedVariables,
+} from "./utils.js";
+import {
+  CacheResolver,
+  EntityTreeNode,
+  ResolutionExpectations,
+} from "./typings.js";
 
 export interface GetPartialRecacheQueryParameter {
-  entityTree: EntityTreeNode;
+  entityTree: EntityTree;
+  operationName?: string;
   originalDocument: DocumentNode;
+}
+
+export interface PartialRecacheQuery {
+  /** Selection sets to use for link queries, by coordinates. */
+  linkSelections: Record<string, SelectionSetNode>;
+  /** Coordinates whose selection sets were narrowed down. */
+  prunedCoordinates: string[];
+  query: DocumentNode;
+  /** The entities requested by each cache resolution. */
+  resolutions: ResolutionExpectations;
+}
+
+function isMarkerField(selection: SelectionNode): selection is FieldNode {
+  return (
+    selection.kind === Kind.FIELD &&
+    selection.alias !== undefined &&
+    isMarkerKey(selection.alias.value)
+  );
+}
+
+function linkSelectionsOf(selectionSet: SelectionSetNode): SelectionNode[] {
+  return selectionSet.selections.flatMap((selection): SelectionNode[] => {
+    if (isMarkerField(selection)) {
+      return [
+        {
+          alias: selection.alias,
+          kind: Kind.FIELD,
+          name: selection.name,
+        },
+      ];
+    }
+    if (selection.kind === Kind.INLINE_FRAGMENT) {
+      const inner = linkSelectionsOf(selection.selectionSet);
+      if (inner.length === 0) {
+        return [];
+      }
+      return [
+        {
+          ...selection,
+          selectionSet: { kind: Kind.SELECTION_SET, selections: inner },
+        },
+      ];
+    }
+    return [];
+  });
+}
+
+function hasIdMarker(selections: readonly SelectionNode[]): boolean {
+  return selections.some((selection) =>
+    selection.kind === Kind.FIELD
+      ? selection.alias !== undefined && isIdMarkerKey(selection.alias.value)
+      : selection.kind === Kind.INLINE_FRAGMENT &&
+        hasIdMarker(selection.selectionSet.selections),
+  );
+}
+
+/**
+ * Replaces a field's selection set with one that only identifies the entity
+ * (its typename and id, inside the same type conditions as in the original).
+ * Returns null if the selection set doesn't identify the entity.
+ */
+export function convertFieldNodeToLink(field: FieldNode): FieldNode | null {
+  if (!field.selectionSet) {
+    return null;
+  }
+
+  const selections = linkSelectionsOf(field.selectionSet);
+
+  if (!hasIdMarker(selections)) {
+    return null;
+  }
+
+  return {
+    ...field,
+    selectionSet: { kind: Kind.SELECTION_SET, selections },
+  };
+}
+
+/**
+ * Narrows a selection set down to what applies to `resolver`'s type
+ * (`typename`), dropping inline fragments that can't apply to it. If the
+ * resolver knows its type conditions (resolvers configured from a schema do),
+ * only fragments on those are kept; otherwise fragments on other known entity
+ * types are dropped.
+ */
+export function selectionSetForType(
+  selectionSet: SelectionSetNode,
+  typename: string,
+  resolver: CacheResolver,
+  otherTypenames: Iterable<string>,
+): SelectionSetNode {
+  const applies: (condition: string) => boolean = resolver.typeConditions
+    ? (condition) =>
+        condition === typename || resolver.typeConditions!.includes(condition)
+    : (() => {
+        const others = new Set(otherTypenames);
+        others.delete(typename);
+        return (condition: string) => !others.has(condition);
+      })();
+
+  function narrow(set: SelectionSetNode): SelectionSetNode {
+    return {
+      ...set,
+      selections: set.selections.flatMap((selection): SelectionNode[] => {
+        if (selection.kind !== Kind.INLINE_FRAGMENT) {
+          return [selection];
+        }
+        if (selection.typeCondition) {
+          return applies(selection.typeCondition.name.value) ? [selection] : [];
+        }
+        // Without a type condition the fragment applies to the same type, so
+        // its own fragments need narrowing too.
+        const inner = narrow(selection.selectionSet);
+        return inner.selections.length > 0
+          ? [{ ...selection, selectionSet: inner }]
+          : [];
+      }),
+    };
+  }
+
+  return narrow(selectionSet);
+}
+
+function nodeCanLink(node: EntityTreeNode | undefined): node is EntityTreeNode {
+  return node !== undefined && node.linkable;
+}
+
+function selectOperation(
+  originalDocument: DocumentNode,
+  operationName?: string,
+): OperationDefinitionNode | undefined {
+  const document = memoInlineFragments(originalDocument);
+  return getOperation(document, operationName);
+}
+
+/**
+ * Collects the selection set of every linkable field in the unpruned
+ * operation, with nested linkable fields already turned into links. These are
+ * used to build link queries, which need the full selection set.
+ */
+function collectLinkSelections(
+  operation: OperationDefinitionNode,
+  entityTree: EntityTree,
+): Record<string, SelectionSetNode> {
+  const linkSelections: Record<string, SelectionSetNode> = {};
+
+  visit(
+    operation,
+    visitWithEntityTree(
+      entityTree,
+      (invalidator): ASTVisitor => ({
+        [Kind.FIELD]: {
+          leave: (field) => {
+            const node = invalidator.getCurrentNode();
+            if (!field.selectionSet || !nodeCanLink(node)) {
+              return;
+            }
+            const link = convertFieldNodeToLink(field);
+            if (!link) {
+              return;
+            }
+            linkSelections[invalidator.getCoordinates()] = field.selectionSet;
+            return link;
+          },
+        },
+      }),
+    ),
+  );
+
+  return linkSelections;
 }
 
 export function getPartialRecacheQuery({
   originalDocument,
   entityTree,
-}: GetPartialRecacheQueryParameter) {
-  if (originalDocument.definitions.length > 1) {
-    originalDocument = memoInlineFragments(originalDocument);
+  operationName,
+}: GetPartialRecacheQueryParameter): PartialRecacheQuery | null {
+  const operation = selectOperation(originalDocument, operationName);
+
+  if (!operation) {
+    throw new Error(
+      operationName
+        ? `Unknown operation "${operationName}"`
+        : "Must provide operation name if query contains multiple operations",
+    );
   }
 
+  if (operation.operation !== OperationTypeNode.QUERY) {
+    throw new Error(`Can't partially re-execute a ${operation.operation}`);
+  }
+
+  const linkSelections = collectLinkSelections(operation, entityTree);
+  const aliases = new ResolutionAliases();
   const cacheResolutions: FieldNode[] = [];
-  let isNoopDocument = false;
+  const prunedCoordinates: string[] = [];
 
-  const linkSelections: Record<string, SelectionSetNode> = {};
-
-  const visitor = visitWithEntityTree(entityTree, (invalidator) => ({
-    [Kind.SELECTION_SET]: {
-      leave: (selectionSet) => {
-        const selections = invalidator.getSelectionsToKeep();
-        if (selections === null) {
-          return;
-        }
-        return pruneSelectionSet(selectionSet, selections);
+  const visitor = visitWithEntityTree(
+    entityTree,
+    (invalidator): ASTVisitor => ({
+      [Kind.SELECTION_SET]: {
+        leave: (selectionSet) => {
+          const selections = invalidator.getSelectionsToKeep();
+          if (selections === null) {
+            return;
+          }
+          prunedCoordinates.push(invalidator.getCoordinates());
+          return pruneSelectionSet(selectionSet, selections);
+        },
       },
-    },
-    [Kind.INLINE_FRAGMENT]: {
-      leave: (inlineFragment) => {
-        /**
-         * An empty selection set is not allowed in
-         * GraphQL, in our IR it serves as a signal to
-         * completely remove the field, allowing us to
-         * distinguish it from fields that simply do not
-         * have selection sets
-         */
-        if (inlineFragment.selectionSet.selections.length === 0) {
-          return null;
-        }
-        return;
-      },
-    },
-    [Kind.OPERATION_DEFINITION]: {
-      leave: (operation) => {
-        const selections = [
-          ...(operation.selectionSet?.selections ?? []),
-          ...cacheResolutions,
-        ];
-
-        if (selections.length === 0) {
-          isNoopDocument = true;
-          return null;
-        }
-
-        return <OperationDefinitionNode>{
-          ...operation,
-          selectionSet: {
-            kind: Kind.SELECTION_SET,
-            selections,
-          },
-        };
-      },
-    },
-    [Kind.FIELD]: {
-      leave: (field) => {
-        if (!field.selectionSet) {
+      [Kind.INLINE_FRAGMENT]: {
+        leave: (inlineFragment) => {
+          /**
+           * An empty selection set is not allowed in GraphQL; in our IR it
+           * signals that the fragment should be removed entirely.
+           */
+          if (inlineFragment.selectionSet.selections.length === 0) {
+            return null;
+          }
           return;
-        }
+        },
+      },
+      [Kind.FIELD]: {
+        leave: (field) => {
+          if (!field.selectionSet) {
+            return;
+          }
 
-        /**
-         * An empty selection set is not allowed in
-         * GraphQL, in our IR it serves as a signal to
-         * completely remove the field, allowing us to
-         * distinguish it from fields that simply do not
-         * have selection sets
-         */
-        if (field.selectionSet.selections.length === 0) {
-          return null;
-        }
+          if (field.selectionSet.selections.length === 0) {
+            // Removing the field narrows the parent's selection set as well.
+            const coordinates = invalidator.getCoordinates();
+            prunedCoordinates.push(
+              coordinates.slice(0, coordinates.lastIndexOf(".")),
+            );
+            return null;
+          }
 
-        const node = invalidator.getCurrentNode();
+          const node = invalidator.getCurrentNode();
 
-        const coordinates = invalidator.getCoordinates();
+          if (!nodeCanLink(node)) {
+            return;
+          }
 
-        if (!node?.resolvers) {
-          return;
-        }
+          const link = convertFieldNodeToLink(field);
 
-        const resolvers = node.resolvers;
+          if (!link) {
+            return;
+          }
 
-        linkSelections[coordinates] = field.selectionSet;
+          const coordinates = invalidator.getCoordinates();
 
-        const requiredEntities = invalidator.getRequiredEntities();
-
-        if (requiredEntities) {
-          for (const [typename, ids] of Object.entries(requiredEntities)) {
-            const resolver = resolvers[typename];
+          for (const [typename, ids] of node.requiredEntities) {
+            const resolver = node.resolvers[typename];
 
             if (resolver === undefined) {
               continue;
             }
 
-            const mapResolutions = getCacheResolutionMapper(resolver);
-
-            const resolutions = mapResolutions(
-              ids,
-              coordinates,
+            const selectionSet = selectionSetForType(
               field.selectionSet,
+              typename,
+              resolver,
+              [...node.typenames, ...entityTree.resolverTypenames],
             );
 
-            for (const resolution of resolutions) {
-              cacheResolutions.push(resolution);
-            }
+            cacheResolutions.push(
+              ...mapCacheResolutions(
+                resolver,
+                typename,
+                ids,
+                coordinates,
+                selectionSet,
+                aliases,
+              ),
+            );
           }
-        }
 
-        return convertFieldNodeToLink(field);
+          return link;
+        },
       },
-    },
-  }));
+    }),
+  );
 
-  const newDocument = visit(originalDocument, visitor);
+  const rewritten = visit(operation, visitor) as OperationDefinitionNode | null;
 
-  if (isNoopDocument) {
+  const selections = [
+    ...(rewritten?.selectionSet.selections ?? []),
+    ...cacheResolutions,
+  ];
+
+  // Nothing but the root typename (or nothing at all) left to fetch.
+  const fetchesSomething = selections.some(
+    (selection) =>
+      !(
+        selection.kind === Kind.FIELD &&
+        selection.alias?.value === ALIAS_ENTITYCACHE_TYPENAME
+      ),
+  );
+
+  if (!fetchesSomething) {
     return null;
   }
 
+  const query: DocumentNode = {
+    definitions: [
+      pruneUnusedVariables({
+        ...operation,
+        selectionSet: { kind: Kind.SELECTION_SET, selections },
+      }),
+    ],
+    kind: Kind.DOCUMENT,
+  };
+
   return {
     linkSelections,
-    query: newDocument,
+    prunedCoordinates,
+    query,
+    resolutions: aliases.expectations,
   };
 }

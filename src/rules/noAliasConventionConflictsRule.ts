@@ -1,27 +1,22 @@
-import { FieldNode, GraphQLError, Kind, ValidationRule } from "graphql";
+import { FieldNode, GraphQLError, ValidationRule } from "graphql";
 import { PARTIAL_CACHE_ALIASPREFIX } from "../constants.js";
 
+/**
+ * Rejects aliases that could be mistaken for Mangrove's cache resolution
+ * aliases. Fragments can contribute root fields too, so every field alias is
+ * checked.
+ */
 export const noAliasConventionConflictsRule: ValidationRule = (context) => {
   return {
-    OperationDefinition(operationDefinitionNode) {
-      const errorNodes: FieldNode[] = [];
-      for (const selection of operationDefinitionNode.selectionSet.selections) {
-        if (selection.kind !== Kind.FIELD) {
-          continue;
-        }
-        if (selection.alias?.value.startsWith(PARTIAL_CACHE_ALIASPREFIX)) {
-          errorNodes.push(selection);
-        }
+    Field(node: FieldNode) {
+      if (node.alias?.value.startsWith(PARTIAL_CACHE_ALIASPREFIX)) {
+        context.reportError(
+          new GraphQLError(
+            `Field aliases can't start with ${PARTIAL_CACHE_ALIASPREFIX}`,
+            { nodes: [node] },
+          ),
+        );
       }
-
-      context.reportError(
-        new GraphQLError(
-          `Root field aliases can't start with ${PARTIAL_CACHE_ALIASPREFIX}`,
-          {
-            nodes: errorNodes,
-          },
-        ),
-      );
     },
   };
 };

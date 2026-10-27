@@ -1,246 +1,251 @@
+import {
+  ALIAS_ENTITYCACHE_ID,
+  ALIAS_ENTITYCACHE_TYPENAME,
+  CoordinateRoot,
+} from "./constants.js";
 import { ASTVisitor } from "graphql";
 import {
   CacheResolverMap,
   EntityCacheResult,
   EntityTreeNode,
-  EntityTreeNodeSelection,
-  EntityTreeNodeSelections,
-  PathPart,
-  isListPathPart,
 } from "./typings.js";
-import { CoordinateRoot } from "./constants.js";
 import {
   DocumentCoordinates,
   visitWithDocumentCoordinates,
 } from "./DocumentCoordinates.js";
-import { memoize1 } from "./borrowedTools/memoize.js";
 
-function flagBranchDirty(node: EntityTreeNode): void {
-  if (node.isDirty) {
-    return;
-  }
-
-  if (node.resolvers !== undefined && !node.isInvalidated) {
-    return;
-  }
-
-  node.isDirty = true;
-
-  if (!node.selections) {
-    return;
-  }
-
-  for (const key of Object.keys(node.selections)) {
-    const selection = node.selections[key];
-    flagBranchDirty(selection.node);
-  }
-}
-
-export function buildEntityTreeNode(
-  parentNode: EntityTreeNode,
-  ecr: EntityCacheResult,
-  resolvers: CacheResolverMap,
-  path: PathPart[] = [...ecr.path],
-  flagDirty = false,
-): EntityTreeNode {
-  const key = path.shift();
-
-  if (!key) {
-    throw new Error("Path is empty");
-  }
-
-  const selections = parentNode.selections ?? {};
-
-  const parentCoords =
-    parentNode.coordinates !== "__root" ? `${parentNode.coordinates}.` : "";
-
-  const coordinates = `${parentCoords}${key.field}`;
-
-  const list = isListPathPart(key);
-
-  const selection = selections[key.field] ?? {
-    node: {
-      coordinates,
-      entities: [],
-      isDirty: false,
-      isInvalidated: false,
-      isList: isListPathPart(key),
-      isRequired: false,
-    },
-  };
-
-  let nextNode = selection.node;
-
-  if (path.length > 0) {
-    nextNode = buildEntityTreeNode(nextNode, ecr, resolvers, path, flagDirty);
-  } else {
-    nextNode.isEntity = true;
-
-    const resolver = resolvers[ecr.entity.typename];
-
-    if (resolver !== undefined) {
-      nextNode.resolvers ??= {};
-      nextNode.resolvers[ecr.entity.typename] = resolver;
-    }
-
-    if (ecr.invalidated) {
-      nextNode.isInvalidated = true;
-      nextNode.isRequired = true;
-
-      // Make sure that any branch paths that passed through
-      // this node are retroactively made dirty.
-      flagBranchDirty(nextNode);
-    }
-  }
-
-  if (nextNode.isRequired) {
-    if (nextNode.resolvers === undefined) {
-      parentNode.isRequired = true;
-    }
-
-    let requiredEntities = selection.requiredEntities;
-
-    if (!requiredEntities) {
-      requiredEntities = {};
-      selection.requiredEntities = requiredEntities;
-    }
-
-    let requiredIds = requiredEntities[ecr.entity.typename];
-
-    if (!requiredIds) {
-      requiredIds = new Set();
-      requiredEntities[ecr.entity.typename] = requiredIds;
-    }
-
-    /**
-     * Ugly AF
-     * How do we clean this up?
-     */
-    if (path.length === 0) {
-      if (
-        ecr.invalidated &&
-        ecr.entity.id !== undefined &&
-        !requiredIds.has(ecr.entity.id)
-      ) {
-        requiredIds.add(ecr.entity.id);
-      }
-    } else if (list && key.id !== undefined && !requiredIds.has(key.id)) {
-      requiredIds.add(key.id);
-    }
-  }
-
-  selection.node = nextNode;
-
-  selections[key.field] = selection;
-
-  parentNode.selections = selections;
-
-  return parentNode;
-}
-
-export function spawnTreeRoot(): EntityTreeNode {
+function createNode(coordinates: string): EntityTreeNode {
   return {
-    coordinates: "__root",
+    children: new Map(),
+    coordinates,
+    hasOpaqueObjects: false,
     isDirty: false,
+    isEntity: false,
     isInvalidated: false,
     isList: false,
     isRequired: false,
-    selections: {
-      [CoordinateRoot.query]: {
-        node: {
-          coordinates: CoordinateRoot.query,
-          isDirty: false,
-          isInvalidated: false,
-          isList: false,
-          isRequired: false,
-        },
-      },
-    },
+    linkable: false,
+    requiredEntities: new Map(),
+    resolvers: {},
+    typenames: new Set(),
   };
 }
 
-function getSelectionIndices(selections: EntityTreeNodeSelections) {
-  return Object.keys(selections).reduce<
-    Record<string, EntityTreeNodeSelection>
-  >((indices, key) => {
-    const selection = selections[key];
-    const nextNode = selection.node;
+export interface EntityTree {
+  /** Every node, by coordinates. */
+  nodes: Map<string, EntityTreeNode>;
+  /** Every type that has a cache resolver. */
+  resolverTypenames: ReadonlySet<string>;
+  root: EntityTreeNode;
+}
 
-    indices[nextNode.coordinates] = selection;
+/**
+ * Builds the entity tree for a cached operation.
+ *
+ * The tree is built in two passes so that the outcome doesn't depend on the
+ * order of the entities: first every entity is placed, then invalidation
+ * state is propagated (`finalizeEntityTree`).
+ */
+export function buildEntityTree(
+  entities: Iterable<EntityCacheResult>,
+  resolvers: CacheResolverMap,
+  opaqueCoordinates: Iterable<string> = [],
+): EntityTree {
+  const root = createNode(CoordinateRoot.query);
+  const nodes = new Map<string, EntityTreeNode>([[root.coordinates, root]]);
+  const invalidatedPaths: EntityTreeNode[][] = [];
+  const invalidatedEntities: EntityCacheResult[] = [];
 
-    if (nextNode.selections) {
-      const selIndices = getSelectionIndices(nextNode.selections);
+  for (const ecr of entities) {
+    const [first, ...rest] = ecr.path;
 
-      indices = {
-        ...indices,
-        ...selIndices,
-      };
+    if (!first || first.field !== CoordinateRoot.query) {
+      throw new Error(
+        `Entity paths must start at ${CoordinateRoot.query}, got ${first?.field}`,
+      );
     }
 
-    return indices;
-  }, {});
-}
+    let node = root;
+    const nodePath = [root];
 
-class Invalidator {
-  coordinates: DocumentCoordinates;
-
-  tree: EntityTreeNode;
-
-  selections: Record<string, EntityTreeNodeSelection>;
-
-  constructor(tree: EntityTreeNode, documentCoordinates: DocumentCoordinates) {
-    this.tree = tree;
-    this.selections = getSelectionIndices({
-      [CoordinateRoot.query]: {
-        node: this.tree,
-      },
-    });
-    this.coordinates = documentCoordinates;
-  }
-
-  getCoordinates() {
-    return this.coordinates.getCoordinates();
-  }
-
-  getCurrentNode(coords = this.getCoordinates()) {
-    return this.getCurrentSelection(coords)?.node;
-  }
-
-  getCurrentSelection(
-    coords = this.getCoordinates(),
-  ): EntityTreeNodeSelection | undefined {
-    return this.selections[coords];
-  }
-
-  getRequiredEntities(coords = this.getCoordinates()) {
-    return this.getCurrentSelection(coords)?.requiredEntities;
-  }
-
-  getSelectionsToKeep(coords = this.getCoordinates()) {
-    const node = this.getCurrentNode(coords);
-    if (!node) {
-      return null;
+    for (const part of rest) {
+      let child = node.children.get(part.field);
+      if (!child) {
+        child = createNode(`${node.coordinates}.${part.field}`);
+        node.children.set(part.field, child);
+        nodes.set(child.coordinates, child);
+      }
+      if (part.index !== undefined) {
+        child.isList = true;
+      }
+      node = child;
+      nodePath.push(node);
     }
-    return getSelectionsToKeep(node);
+
+    node.isEntity = true;
+    node.typenames.add(ecr.entity.typename);
+
+    if (ecr.invalidated) {
+      node.isInvalidated = true;
+      invalidatedPaths.push(nodePath);
+      invalidatedEntities.push(ecr);
+    }
+  }
+
+  for (const coordinates of opaqueCoordinates) {
+    const node = nodes.get(coordinates);
+    if (node) {
+      node.hasOpaqueObjects = true;
+    }
+  }
+
+  finalizeEntityTree(root, resolvers, invalidatedPaths, invalidatedEntities);
+
+  return { nodes, resolverTypenames: new Set(Object.keys(resolvers)), root };
+}
+
+function resetComputedState(node: EntityTreeNode) {
+  node.isDirty = false;
+  node.isRequired = false;
+  node.requiredEntities = new Map();
+  for (const child of node.children.values()) {
+    resetComputedState(child);
   }
 }
 
-export function visitWithEntityTree(
-  entityTree: EntityTreeNode,
-  visitor: (invalidator: Invalidator) => ASTVisitor,
-): ASTVisitor {
-  const coordinates = new DocumentCoordinates();
-  const invalidator = new Invalidator(entityTree, coordinates);
+function computeLinkability(node: EntityTreeNode, resolvers: CacheResolverMap) {
+  node.resolvers = {};
+  node.linkable = false;
 
-  return visitWithDocumentCoordinates(coordinates, visitor(invalidator));
+  if (node.isEntity && !node.hasOpaqueObjects && node.typenames.size > 0) {
+    let all = true;
+    for (const typename of node.typenames) {
+      const resolver = resolvers[typename];
+      if (resolver === undefined) {
+        all = false;
+        break;
+      }
+      node.resolvers[typename] = resolver;
+    }
+    node.linkable = all;
+    if (!all) {
+      node.resolvers = {};
+    }
+  }
+
+  for (const child of node.children.values()) {
+    computeLinkability(child, resolvers);
+  }
 }
 
-const getSelectionsToKeep = memoize1(function getSelectionsToKeep(
-  node: EntityTreeNode,
+function addRequiredEntity(node: EntityTreeNode, typename: string, id: string) {
+  let ids = node.requiredEntities.get(typename);
+  if (!ids) {
+    ids = new Set();
+    node.requiredEntities.set(typename, ids);
+  }
+  ids.add(id);
+}
+
+/**
+ * Marks the nodes leading to each invalidated entity as required, and decides
+ * at which node the invalidated data is re-resolved:
+ *
+ * - at the invalidated entity itself, if it can be reached through a cache
+ *   resolver,
+ * - otherwise at the closest ancestor entity that can, re-resolving that
+ *   ancestor (by its own id) with a selection narrowed down to the path,
+ * - otherwise from the root of the operation.
+ *
+ * Returns false if a linkable node turned out to be unusable, in which case
+ * it has been made unlinkable and the pass must be repeated.
+ */
+function computeRequired(
+  invalidatedPaths: EntityTreeNode[][],
+  invalidatedEntities: EntityCacheResult[],
+): boolean {
+  for (let p = 0; p < invalidatedPaths.length; p++) {
+    const nodePath = invalidatedPaths[p];
+    const ecr = invalidatedEntities[p];
+
+    for (let i = nodePath.length - 1; i >= 0; i--) {
+      const node = nodePath[i];
+      node.isRequired = true;
+
+      if (!node.linkable) {
+        continue;
+      }
+
+      const part = ecr.path[i];
+      const isLeaf = i === nodePath.length - 1;
+      const typename = isLeaf ? ecr.entity.typename : part.typename;
+      const id = isLeaf
+        ? ecr.entity.id === undefined
+          ? undefined
+          : String(ecr.entity.id)
+        : part.id;
+
+      if (
+        typename === undefined ||
+        id === undefined ||
+        node.resolvers[typename] === undefined
+      ) {
+        // We know we need to pass through this node but can't tell which
+        // entity to resolve; reach it from its parent instead.
+        node.linkable = false;
+        node.resolvers = {};
+        return false;
+      }
+
+      addRequiredEntity(node, typename, id);
+      break;
+    }
+  }
+
+  return true;
+}
+
+function computeDirty(node: EntityTreeNode, parentDirty: boolean) {
+  node.isDirty = node.isInvalidated || (parentDirty && !node.linkable);
+
+  for (const child of node.children.values()) {
+    computeDirty(child, node.isDirty);
+  }
+}
+
+function finalizeEntityTree(
+  root: EntityTreeNode,
+  resolvers: CacheResolverMap,
+  invalidatedPaths: EntityTreeNode[][],
+  invalidatedEntities: EntityCacheResult[],
+) {
+  computeLinkability(root, resolvers);
+
+  // Each failed round removes one linkable node, so this terminates.
+  do {
+    resetComputedState(root);
+  } while (!computeRequired(invalidatedPaths, invalidatedEntities));
+
+  computeDirty(root, false);
+}
+
+/**
+ * Which response keys of the selection set at `node` to keep, or null to keep
+ * the selection set in full.
+ */
+export function getSelectionsToKeep(
+  node: EntityTreeNode | undefined,
 ): readonly string[] | null {
   /*
-   * Any node that is dirty - ie, either invalidated or downstream from an invalidated
-   * node within the same resolver - should always have their selections included in full.
+   * Positions without entities are kept as far as their parent keeps them.
+   */
+  if (!node) {
+    return null;
+  }
+
+  /*
+   * Invalidated nodes, and nodes below them in the same segment, are fetched
+   * in full.
    */
   if (node.isDirty) {
     return null;
@@ -248,36 +253,72 @@ const getSelectionsToKeep = memoize1(function getSelectionsToKeep(
 
   if (node.isRequired) {
     /*
-     * Traversed list nodes need to always be included in full, as they are
-     * considered state-volatile.
+     * Traversed lists are always fetched in full, as their membership is
+     * state-volatile.
      */
     if (node.isList) {
       return null;
     }
 
+    /*
+     * Traversed objects that are not entities have no way of being
+     * invalidated themselves, so they are fetched in full.
+     */
     if (!node.isEntity) {
-      /*
-       * Traversed object nodes that are not known entities need to be included in full,
-       * because they could have been changed/invalidated without us knowing
-       */
       return null;
     }
 
     /*
-     * Traversed entity object nodes should include all paths leading toward an
-     * invalidated entity. If they had been changed, they would have been invalidated,
-     * so partially merging in the path is safe.
+     * Traversed entities only include the paths leading towards an
+     * invalidated entity; if anything else had changed, they would have been
+     * invalidated themselves. Their identity is kept so the merge can verify
+     * it is still the same entity.
      */
-    return Object.keys(node.selections ?? {});
+    const keep = [ALIAS_ENTITYCACHE_ID, ALIAS_ENTITYCACHE_TYPENAME];
+    for (const [field, child] of node.children) {
+      if (child.isRequired || child.isDirty) {
+        keep.push(field);
+      }
+    }
+    return keep;
   }
 
   /*
-   * Non-required resolver nodes need to maintain their selection set in order to
-   * inject it into a link if needed
+   * Linkable nodes keep their selections so they can be turned into links
+   * (whose selection sets are used for follow-up link queries).
    */
-  if (node.resolvers !== undefined) {
+  if (node.linkable) {
     return null;
   }
 
   return [];
-});
+}
+
+export class Invalidator {
+  constructor(
+    private readonly tree: EntityTree,
+    private readonly coordinates: DocumentCoordinates,
+  ) {}
+
+  getCoordinates() {
+    return this.coordinates.getCoordinates();
+  }
+
+  getCurrentNode(coords = this.getCoordinates()) {
+    return this.tree.nodes.get(coords);
+  }
+
+  getSelectionsToKeep(coords = this.getCoordinates()) {
+    return getSelectionsToKeep(this.getCurrentNode(coords));
+  }
+}
+
+export function visitWithEntityTree(
+  entityTree: EntityTree,
+  visitor: (invalidator: Invalidator) => ASTVisitor,
+): ASTVisitor {
+  const coordinates = new DocumentCoordinates();
+  const invalidator = new Invalidator(entityTree, coordinates);
+
+  return visitWithDocumentCoordinates(coordinates, visitor(invalidator));
+}

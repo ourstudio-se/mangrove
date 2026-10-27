@@ -3,11 +3,12 @@ import {
   ALIAS_ENTITYCACHE_TYPENAME,
 } from "./constants.js";
 import { ExecutionResult, parse } from "graphql";
-import { getCacheAlias } from "./utils.js";
+import { EntityWithLocation } from "./typings.js";
+import { getCacheResolverAlias } from "./alias.js";
 import { makeResultProcessor } from "./resultProcessor.js";
 
 describe("resultProcessor", () => {
-  test("collects entities", (done) => {
+  test("collects entities", async () => {
     const nextResult: ExecutionResult = {
       data: {
         dashboard: {
@@ -41,80 +42,91 @@ describe("resultProcessor", () => {
       },
     };
 
+    const stored: {
+      cacheKey: string;
+      collectedEntities: readonly EntityWithLocation[];
+      ttl: number;
+    }[] = [];
+
     const processResult = makeResultProcessor({
+      awaitWriteBeforeResponse: true,
       async storeExecutionResult({ cacheKey, collectedEntities, ttl }) {
-        try {
-          expect(cacheKey).toBe("abc123");
-          expect(ttl).toBe(60 * 60 * 1000);
-          expect(collectedEntities).toEqual([
-            {
-              entity: {
-                id: "1",
-                typename: "UpdateInfo",
-              },
-              path: [
-                {
-                  field: "Query",
-                },
-                {
-                  field: "dashboard",
-                },
-                {
-                  field: "latestUpdates",
-                  id: "1",
-                  index: 0,
-                },
-              ],
-            },
-            {
-              entity: {
-                id: "2",
-                typename: "UpdateInfo",
-              },
-              path: [
-                {
-                  field: "Query",
-                },
-                {
-                  field: "dashboard",
-                },
-                {
-                  field: "latestUpdates",
-                  id: "2",
-                  index: 1,
-                },
-              ],
-            },
-            {
-              entity: {
-                id: 2,
-                typename: "Activity",
-              },
-              path: [
-                {
-                  field: "Query",
-                },
-                {
-                  field: "dashboard",
-                },
-                {
-                  field: "topActivity",
-                },
-              ],
-            },
-          ]);
-        } finally {
-          done();
-        }
+        stored.push({ cacheKey, collectedEntities, ttl });
       },
       ttl: 60 * 60 * 1000,
     });
 
-    processResult({
+    await processResult({
       cacheKey: "abc123",
       nextResults: [nextResult],
       originalDocument: parse(`query { a }`),
     });
+
+    expect(stored).toHaveLength(1);
+    const [{ cacheKey, collectedEntities, ttl }] = stored;
+    expect(cacheKey).toBe("abc123");
+    expect(ttl).toBe(60 * 60 * 1000);
+    expect(collectedEntities).toEqual([
+      {
+        entity: {
+          id: "1",
+          typename: "UpdateInfo",
+        },
+        path: [
+          {
+            field: "Query",
+          },
+          {
+            field: "dashboard",
+          },
+          {
+            field: "latestUpdates",
+            id: "1",
+            index: 0,
+            typename: "UpdateInfo",
+          },
+        ],
+      },
+      {
+        entity: {
+          id: "2",
+          typename: "UpdateInfo",
+        },
+        path: [
+          {
+            field: "Query",
+          },
+          {
+            field: "dashboard",
+          },
+          {
+            field: "latestUpdates",
+            id: "2",
+            index: 1,
+            typename: "UpdateInfo",
+          },
+        ],
+      },
+      {
+        entity: {
+          id: "2",
+          typename: "Activity",
+        },
+        path: [
+          {
+            field: "Query",
+          },
+          {
+            field: "dashboard",
+          },
+          {
+            field: "topActivity",
+            id: "2",
+            typename: "Activity",
+          },
+        ],
+      },
+    ]);
   });
 
   test("merges partial result into cached result", async () => {
@@ -241,7 +253,7 @@ describe("resultProcessor", () => {
 
     const nextResult: ExecutionResult = {
       data: {
-        [getCacheAlias(`dashboard_latestUpdates`)]: {
+        [getCacheResolverAlias("Query.dashboard.latestUpdates", 0)]: {
           [ALIAS_ENTITYCACHE_ID]: "2",
           [ALIAS_ENTITYCACHE_TYPENAME]: "UpdateInfo",
           __typename: "UpdateInfo",
@@ -335,7 +347,7 @@ describe("resultProcessor", () => {
 
     const nextResult: ExecutionResult = {
       data: {
-        [getCacheAlias(`dashboard_latestUpdates`)]: [
+        [getCacheResolverAlias("Query.dashboard.latestUpdates", 0)]: [
           {
             [ALIAS_ENTITYCACHE_ID]: "1",
             [ALIAS_ENTITYCACHE_TYPENAME]: "UpdateInfo",

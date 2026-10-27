@@ -1,219 +1,397 @@
 import {
   Cache,
-  CacheResolverMap,
+  CachedExecutionResult,
   EntityCacheResult,
   EntityRecord,
-  EntityTypeReference,
   InvalidationStrategy,
-  KnownEntitiesMap,
   Logger,
+  PathPart,
 } from "../typings.js";
-import { DocumentNode, SelectionSetNode } from "graphql";
-import { buildEntityTreeNode, spawnTreeRoot } from "../tree.js";
-import {
-  createCacheSetMemberGetter,
-  getAndParseCachedResponse,
-  getEntityKeysToInvalidate,
-} from "./utils.js";
 import {
   defaultBuildEntityKey,
-  defaultBuildEntityReferenceKey,
   defaultBuildLazyOperationKey,
-  defaultParseEntityKey,
-  defaultParseEntityReferenceKey,
+  defaultBuildResultKey,
+  defaultBuildTypeIndexKey,
 } from "../defaults.js";
+import { buildEntityTree } from "../tree.js";
+import { collectOpaqueCoordinates } from "../utils.js";
 import { getPartialRecacheQuery } from "../getPartialRecacheQuery.js";
 
 export interface LazyInvalidationStrategyOpts {
   buildEntityKey?: (entity: EntityRecord) => string;
-  buildEntityReferenceKey?: (entityReference: EntityTypeReference) => string;
   buildOperationKey?: (cacheKey: string) => string;
+  buildResultKey?: (cacheKey: string) => string;
+  buildTypeIndexKey?: (typename: string) => string;
   cache: Cache;
   logger?: Logger;
-  parseEntityKey?: (key: string) => EntityRecord;
-  parseEntityReferenceKey?: (key: string) => EntityTypeReference | null;
 }
 
-interface ParseEntityReferencesParameter {
-  buildOperationKey: (cacheKey: string) => string;
-  cacheKey: string;
-  entityReferences: EntityTypeReference[];
-  operationsByEntity: string[][];
-  parseEntityKey: (str: string) => EntityRecord;
-  resolvers: CacheResolverMap;
+/** State carried from reading the cache to storing the result. */
+interface LazyCacheState {
+  /** Invalidation epoch observed before anything was read. */
+  epoch: number;
+  /**
+   * When the request started reading. Data fetched by the request is at
+   * most this old, so expiries are computed from it.
+   */
+  readAt: number;
+  /** Expiry of the cached result this request started from. */
+  expiresAt?: number;
+  /**
+   * Entities that were valid when the cached result was read, and whose data
+   * therefore wasn't refetched.
+   */
+  validEntityKeys?: string[];
+  /** Version of the cached result this request started from. */
+  version?: string;
 }
 
-async function parseEntityReferences({
-  cacheKey,
-  resolvers,
-  parseEntityKey = defaultParseEntityKey,
-  entityReferences,
-  operationsByEntity,
-}: ParseEntityReferencesParameter) {
-  const entityTree = spawnTreeRoot();
-  const knownEntities: KnownEntitiesMap = {};
-
-  entityReferences.forEach((entityReference, index) => {
-    const operations = operationsByEntity[index];
-    const hasCrossReference = operations.some(
-      (operation) => operation === cacheKey,
-    );
-
-    const ecr: EntityCacheResult = {
-      entity: parseEntityKey(entityReference.entityKey),
-      invalidated: !hasCrossReference,
-      path: entityReference.path,
-    };
-
-    if (ecr.entity.id) {
-      let typeIds = knownEntities[ecr.entity.typename];
-
-      if (typeIds === undefined) {
-        typeIds = new Set();
-        knownEntities[ecr.entity.typename] = typeIds;
-      }
-
-      typeIds.add(ecr.entity.id);
-    }
-
-    buildEntityTreeNode(entityTree, ecr, resolvers);
-  });
-
-  return { entityTree, knownEntities };
+interface StoredEnvelope {
+  expiresAt: number;
+  /**
+   * Identifies this stored copy. Entity sets vouch for specific versions,
+   * so that one request's memberships never vouch for another request's
+   * data.
+   */
+  version: string;
+  /** Coordinates holding objects that aren't identifiable entities. */
+  opaque: string[];
+  result: CachedExecutionResult;
+  v: 2;
 }
 
+interface StoredReference {
+  /** Entity id, or null for entities identified by typename alone. */
+  i: string | null;
+  p: PathPart[];
+  t: string;
+}
+
+function isLazyCacheState(value: unknown): value is LazyCacheState {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as LazyCacheState).epoch === "number" &&
+    typeof (value as LazyCacheState).readAt === "number"
+  );
+}
+
+function parseEnvelope(serialized: string): StoredEnvelope | null {
+  const parsed = JSON.parse(serialized);
+  if (
+    parsed?.v !== 2 ||
+    typeof parsed.expiresAt !== "number" ||
+    typeof parsed.version !== "string" ||
+    !Array.isArray(parsed.opaque) ||
+    typeof parsed.result !== "object"
+  ) {
+    return null;
+  }
+  return parsed;
+}
+
+function createVersion() {
+  return `${Date.now().toString(36)}.${Math.random().toString(36).slice(2)}`;
+}
+
+/** The member of an entity's set vouching for one version of a result. */
+function versionMember(cacheKey: string, version: string) {
+  return `${cacheKey}@${version}`;
+}
+
+function serializeReference(entity: EntityRecord, path: readonly PathPart[]) {
+  const reference: StoredReference = {
+    i: entity.id === undefined ? null : String(entity.id),
+    p: path.map((part) => {
+      const out: PathPart = { field: part.field };
+      if (part.index !== undefined) out.index = part.index;
+      if (part.typename !== undefined) out.typename = part.typename;
+      if (part.id !== undefined) out.id = part.id;
+      return out;
+    }),
+    t: entity.typename,
+  };
+  return JSON.stringify(reference);
+}
+
+function parseReference(serialized: string): EntityCacheResult {
+  const { i, p, t } = JSON.parse(serialized) as StoredReference;
+  if (typeof t !== "string" || !Array.isArray(p) || p.length === 0) {
+    throw new Error(`Invalid entity reference ${serialized}`);
+  }
+  return {
+    entity: i === null ? { typename: t } : { id: i, typename: t },
+    invalidated: false,
+    path: p,
+  };
+}
+
+/**
+ * Keeps the adaptive logic in the execution path: invalidating an entity
+ * simply deletes its key, and each request works out what to refetch by
+ * checking which of the entities in its cached result are still valid.
+ *
+ * Every entity has a set of the cached operations that hold valid data for
+ * it. A cached result stays valid for an entity as long as the operation is a
+ * member of that entity's set.
+ */
 export const lazyInvalidationStrategy = ({
   buildEntityKey = defaultBuildEntityKey,
-  buildEntityReferenceKey = defaultBuildEntityReferenceKey,
   buildOperationKey = defaultBuildLazyOperationKey,
-  parseEntityKey = defaultParseEntityKey,
-  parseEntityReferenceKey = defaultParseEntityReferenceKey,
+  buildResultKey = defaultBuildResultKey,
+  buildTypeIndexKey = defaultBuildTypeIndexKey,
   cache,
   logger = console,
 }: LazyInvalidationStrategyOpts): InvalidationStrategy => {
   return {
     async getPartialExecutionOpts({
       cacheKey,
+      operationName,
       query: originalDocument,
       resolvers,
     }) {
-      const result = await getAndParseCachedResponse(cache, cacheKey, logger);
+      const readAt = Date.now();
+      // The epoch must be read before anything else, so that invalidations
+      // that happen while this request runs are detected when storing.
+      const epochPromise = cache.getEpoch();
+      const serializedPromise = cache.get(buildResultKey(cacheKey));
+      const epoch = await epochPromise;
+      const serialized = await serializedPromise;
 
-      if (!result) {
-        return {
-          knownEntities: {},
-          linkSelections: {},
-          query: originalDocument,
-        };
+      const uncached = {
+        cacheState: { epoch, readAt } satisfies LazyCacheState,
+        linkSelections: {},
+        query: originalDocument,
+      };
+
+      if (!serialized) {
+        return uncached;
       }
 
-      const getCacheSetMembers = createCacheSetMemberGetter(cache);
-
-      const entities = await getCacheSetMembers(buildOperationKey(cacheKey));
-
-      const entityReferences = entities.flatMap((entityReferenceKey) => {
-        return parseEntityReferenceKey(entityReferenceKey) ?? [];
-      });
-
-      if (entityReferences.length === 0) {
-        return {
-          knownEntities: {},
-          linkSelections: {},
-          query: originalDocument,
-        };
-      }
-
-      /* We're using the Promise.all() pattern here to
-        let the cache know it can resolve the key searches
-        in parallell/as part of the same pipeline if it
-        wants to */
-      const operationsByEntity = await Promise.all(
-        entityReferences.map((entityReference) => {
-          return getCacheSetMembers(entityReference.entityKey);
-        }),
-      );
-
-      const { knownEntities, entityTree } = await parseEntityReferences({
-        buildOperationKey,
-        cacheKey,
-        entityReferences,
-        operationsByEntity,
-        parseEntityKey,
-        resolvers,
-      });
-
-      let query: DocumentNode | undefined;
-      let linkSelections: Record<string, SelectionSetNode> | undefined;
+      let envelope: StoredEnvelope | null;
+      let references: EntityCacheResult[];
 
       try {
-        const result = getPartialRecacheQuery({
-          entityTree,
-          originalDocument,
-        });
+        envelope = parseEnvelope(serialized);
 
-        if (result) {
-          query = result.query;
-          linkSelections = result.linkSelections;
+        if (!envelope || envelope.expiresAt <= Date.now()) {
+          return uncached;
         }
+
+        const serializedReferences = await cache.getSetMembers(
+          buildOperationKey(cacheKey),
+        );
+
+        references = serializedReferences.map(parseReference);
       } catch (err) {
         logger.error(
-          `Unexpected error when handling getting partial query, falling back to uncached execution: ${err.message}`,
+          "Error reading cached result, falling back to uncached execution",
         );
-        return {
-          knownEntities: {},
-          linkSelections: {},
-          query: originalDocument,
-        };
+        logger.error(err);
+        return uncached;
       }
 
-      linkSelections = linkSelections ?? {};
+      if (references.length === 0) {
+        return uncached;
+      }
+
+      const entityKeys = Array.from(
+        new Set(references.map(({ entity }) => buildEntityKey(entity))),
+      );
+
+      const validity = new Map(
+        await Promise.all(
+          entityKeys.map(
+            async (entityKey) =>
+              [
+                entityKey,
+                await cache.isSetMember(
+                  entityKey,
+                  versionMember(cacheKey, envelope.version),
+                ),
+              ] as const,
+          ),
+        ),
+      );
+
+      for (const reference of references) {
+        reference.invalidated = !validity.get(buildEntityKey(reference.entity));
+      }
+
+      const cacheState: LazyCacheState = {
+        epoch,
+        readAt,
+        expiresAt: envelope.expiresAt,
+        validEntityKeys: entityKeys.filter((key) => validity.get(key)),
+        version: envelope.version,
+      };
+
+      let partial: ReturnType<typeof getPartialRecacheQuery>;
+
+      try {
+        partial = getPartialRecacheQuery({
+          entityTree: buildEntityTree(references, resolvers, envelope.opaque),
+          operationName,
+          originalDocument,
+        });
+      } catch (err) {
+        logger.error(
+          "Unexpected error when building partial query, falling back to uncached execution",
+        );
+        logger.error(err);
+        return uncached;
+      }
 
       return {
-        knownEntities,
-        linkSelections,
-        query,
-        result,
+        cacheState,
+        linkSelections: partial?.linkSelections ?? {},
+        prunedCoordinates: partial?.prunedCoordinates,
+        query: partial?.query,
+        resolutions: partial?.resolutions,
+        result: envelope.result,
       };
     },
     async invalidateEntities(entitiesToInvalidate) {
-      const keys = await getEntityKeysToInvalidate({
-        buildEntityKey,
-        cache,
-        entitiesToInvalidate,
-      });
-      if (keys.size > 0) {
-        await cache.clear(keys);
+      const keys = new Set<string>();
+      const indexes = new Set<string>();
+
+      for (const entity of entitiesToInvalidate) {
+        if (!entity.typename) {
+          throw new Error("Can't invalidate an entity without a typename");
+        }
+
+        if (entity.id !== undefined && entity.id !== null) {
+          keys.add(buildEntityKey(entity));
+        } else {
+          // Every entity of the type, and the type itself.
+          keys.add(buildEntityKey({ typename: entity.typename }));
+          indexes.add(buildTypeIndexKey(entity.typename));
+        }
       }
+
+      if (keys.size === 0) {
+        return;
+      }
+
+      await cache.invalidate({ indexes, keys, markers: keys });
     },
     async storeExecutionResult({
       cacheKey,
+      cacheState,
       executionResult,
       collectedEntities,
+      mergedIntoCachedResult = false,
       ttl,
       entityTtls,
     }) {
-      const stringifiedResult = JSON.stringify(executionResult);
-      const pipe = cache.getPipe();
+      if (!isLazyCacheState(cacheState)) {
+        logger.warn(
+          "Not storing result: it was not produced from a cache read by this strategy",
+        );
+        return;
+      }
 
-      const operationKey = buildOperationKey(cacheKey);
+      const now = Date.now();
+      // Everything fetched by this request is at most as old as the request.
+      const age = Math.max(0, now - cacheState.readAt);
 
-      const entityReferences: [string, number][] = [];
+      // A merged result is only as fresh as the cached result it was merged
+      // into, so it keeps that result's expiry.
+      const expiresAt =
+        mergedIntoCachedResult && cacheState.expiresAt !== undefined
+          ? cacheState.expiresAt
+          : cacheState.readAt + ttl;
+
+      // Clamped, in case the clock jumped backwards during the request.
+      const remaining = Math.min(expiresAt - now, ttl);
+
+      if (remaining <= 0) {
+        return;
+      }
+
+      const version = createVersion();
+      const member = versionMember(cacheKey, version);
+      const envelope: StoredEnvelope = {
+        expiresAt,
+        version,
+        opaque: collectOpaqueCoordinates(executionResult.data),
+        result: executionResult,
+        v: 2,
+      };
+
+      const entities = new Map<
+        string,
+        { entity: EntityRecord; memberTtl: number }
+      >();
+      const references = new Set<string>();
 
       for (const { entity, path } of collectedEntities) {
         const entityKey = buildEntityKey(entity);
-        const entityReferenceKey = buildEntityReferenceKey({
-          entityKey,
-          path,
-        });
-        const entityTtl = entityTtls[entity.typename] ?? ttl;
-        await pipe.addMembersToSet(entityKey, [[cacheKey, entityTtl]]);
+        const entityTtl = Math.min(
+          (entityTtls[entity.typename] ?? ttl) - age,
+          remaining,
+        );
+        const existing = entities.get(entityKey);
 
-        entityReferences.push([entityReferenceKey, ttl]);
+        if (!existing || existing.memberTtl > entityTtl) {
+          entities.set(entityKey, { entity, memberTtl: entityTtl });
+        }
+
+        references.add(serializeReference(entity, path));
+      }
+
+      const operationKey = buildOperationKey(cacheKey);
+
+      // Data of entities that were still valid in the cached result was taken
+      // from the cache, not refetched. Their validity is carried over from
+      // the version that was read, if (and for as long as) it still holds.
+      const inheritedFrom =
+        mergedIntoCachedResult && cacheState.version !== undefined
+          ? versionMember(cacheKey, cacheState.version)
+          : undefined;
+      const notRefetched = new Set(
+        inheritedFrom !== undefined ? cacheState.validEntityKeys ?? [] : [],
+      );
+
+      // Never overwrite a result stored by a request that started later.
+      const pipe = cache.getPipe({
+        epoch: cacheState.epoch,
+        key: `${operationKey}:epoch`,
+        ttl: remaining,
+      });
+
+      for (const [entityKey, { entity, memberTtl }] of entities) {
+        if (!(memberTtl > 0)) {
+          continue;
+        }
+
+        const typeKey = buildEntityKey({ typename: entity.typename });
+
+        await pipe.addMembersToSet(entityKey, [[member, memberTtl]], {
+          guard: {
+            epoch: cacheState.epoch,
+            markers: entityKey === typeKey ? [entityKey] : [entityKey, typeKey],
+          },
+          inheritFrom: notRefetched.has(entityKey) ? inheritedFrom : undefined,
+        });
+
+        if (entity.id !== undefined) {
+          await pipe.addMembersToSet(buildTypeIndexKey(entity.typename), [
+            [entityKey, memberTtl],
+          ]);
+        }
       }
 
       await pipe.clear([operationKey]);
-      await pipe.addMembersToSet(operationKey, entityReferences);
-      await pipe.set(cacheKey, stringifiedResult, ttl);
+      await pipe.addMembersToSet(
+        operationKey,
+        Array.from(references, (reference) => [reference, remaining]),
+      );
+      await pipe.set(
+        buildResultKey(cacheKey),
+        JSON.stringify(envelope),
+        remaining,
+      );
 
       await pipe.execute();
     },
